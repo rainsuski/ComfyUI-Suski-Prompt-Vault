@@ -5,8 +5,10 @@
  * 全面对齐 aaalice-prompt-library v2 标准数据模型，
  * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
  * 接入导入预检冲突处理中心及导出预览统计中心。
+ * 通过 WebSocket 监听词库变更广播，实现多节点多端视图实时响应与同步。
  */
 
+import { api } from "../../../scripts/api.js";
 import { app } from "../../../scripts/app.js";
 import { fetchLibrary } from "./js/api.js";
 import { LeftVaultComponent } from "./js/components/left_vault.js";
@@ -37,6 +39,9 @@ let globalLibrary = {
     selection: { entryIds: [] },
 };
 
+/** 当前画布上所有活跃节点的状态实例集合 */
+const activeNodeStates = new Set();
+
 function injectStyleSheet(href) {
     const existing = document.querySelector(`link[href="${href}"]`);
     if (!existing) {
@@ -52,10 +57,23 @@ injectStyleSheet(new URL("./css/prompt_vault.css", import.meta.url).href);
 injectStyleSheet(new URL("./css/tile.css", import.meta.url).href);
 injectStyleSheet(new URL("./css/modal.css", import.meta.url).href);
 
+/**
+ * 从后端获取最新词库并更新全局缓存。
+ */
 async function refreshGlobalData() {
     const res = await fetchLibrary();
     if (res && res.success && res.data) {
         globalLibrary = res.data;
+    }
+}
+
+/**
+ * 刷新全局词库缓存并通知所有活跃节点重新渲染。
+ */
+async function notifyAllNodesRefresh() {
+    await refreshGlobalData();
+    for (const state of activeNodeStates) {
+        state.notify();
     }
 }
 
@@ -64,6 +82,11 @@ app.registerExtension({
 
     async setup() {
         await refreshGlobalData();
+
+        // 监听服务端 WebSocket 词库变更广播，实时驱动所有画布节点刷新
+        api.addEventListener("prompt_vault:library_updated", async () => {
+            await notifyAllNodesRefresh();
+        });
     },
 
     async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -85,6 +108,16 @@ app.registerExtension({
 
             const state = new VaultNodeState(node);
             node._vaultState = state;
+            activeNodeStates.add(state);
+
+            // 监听节点销毁，释放状态引用
+            const origOnRemoved = node.onRemoved;
+            node.onRemoved = function () {
+                activeNodeStates.delete(state);
+                if (typeof origOnRemoved === "function") {
+                    origOnRemoved.apply(this, arguments);
+                }
+            };
 
             let dataWidget = node.widgets?.find((w) => w.name === "selected_tiles_data");
             if (!dataWidget) {
@@ -116,8 +149,7 @@ app.registerExtension({
             container.appendChild(grid);
 
             const notifyRefresh = async () => {
-                await refreshGlobalData();
-                state.notify();
+                await notifyAllNodesRefresh();
             };
 
             // 实例化全套专业弹窗管理器
@@ -224,7 +256,7 @@ app.registerExtension({
                                 globalLibrary.categories || []
                             );
                         }
-                        state.notify();
+                        await notifyAllNodesRefresh();
                     };
                 }
             );

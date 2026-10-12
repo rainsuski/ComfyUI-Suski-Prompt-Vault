@@ -2,7 +2,8 @@
 """ComfyUI aiohttp Web 服务端路由控制模块。
 
 提供符合 aaalice-prompt-library v2 标准的词库全量读写、条目/分类/收藏夹 CRUD、
-多格式智能容错导入、单文件直接导出以及旧路由全量别名映射（杜绝 404/405）。
+多格式智能容错导入、单文件直接导出以及旧路由全量别名映射。
+支持在数据变更时向所有连接的客户端推送 WebSocket 广播通知。
 """
 
 import json
@@ -12,12 +13,24 @@ import os
 from typing import Any, Dict
 
 from aiohttp import web
+
 from server import PromptServer
 
 from .config import THUMBNAILS_DIR
 from .storage import storage_manager
 
 logger = logging.getLogger("ComfyUI-Suski-Prompt-Vault")
+
+
+def broadcast_library_changed(detail: str = "") -> None:
+    """向所有连接的前端客户端广播词库数据变更通知。"""
+    try:
+        PromptServer.instance.send_sync(
+            "prompt_vault:library_updated",
+            {"detail": detail},
+        )
+    except Exception as err:
+        logger.error("Failed to broadcast library update: %s", str(err))
 
 
 def register_routes() -> None:
@@ -83,6 +96,7 @@ def register_routes() -> None:
 
             success, saved_item = storage_manager.upsert_entry(entry_data)
             if success:
+                broadcast_library_changed("upsert_entry")
                 return web.json_response({"success": True, "data": saved_item})
             return web.json_response(
                 {"success": False, "error": "Failed to persist entry."}, status=500
@@ -98,6 +112,8 @@ def register_routes() -> None:
         try:
             entry_id = request.match_info.get("id", "")
             success = storage_manager.delete_entry(entry_id)
+            if success:
+                broadcast_library_changed("delete_entry")
             return web.json_response({"success": success})
         except Exception as err:
             logger.error("Error in delete_entry_endpoint: %s", str(err))
@@ -111,6 +127,8 @@ def register_routes() -> None:
         try:
             cat_data = await request.json()
             success, item = storage_manager.upsert_category(cat_data)
+            if success:
+                broadcast_library_changed("upsert_category")
             return web.json_response({"success": success, "data": item})
         except Exception as err:
             logger.error("Error in upsert_category_endpoint: %s", str(err))
@@ -126,6 +144,8 @@ def register_routes() -> None:
             success = storage_manager.delete_category(
                 cat_id, delete_branch=delete_branch
             )
+            if success:
+                broadcast_library_changed("delete_category")
             return web.json_response({"success": success})
         except Exception as err:
             logger.error("Error in delete_category_endpoint: %s", str(err))
@@ -139,6 +159,8 @@ def register_routes() -> None:
         try:
             col_data = await request.json()
             success, item = storage_manager.upsert_collection(col_data)
+            if success:
+                broadcast_library_changed("upsert_collection")
             return web.json_response({"success": success, "data": item})
         except Exception as err:
             logger.error("Error in upsert_collection_endpoint: %s", str(err))
@@ -151,6 +173,8 @@ def register_routes() -> None:
         try:
             col_id = request.match_info.get("id", "")
             success = storage_manager.delete_collection(col_id)
+            if success:
+                broadcast_library_changed("delete_collection")
             return web.json_response({"success": success})
         except Exception as err:
             logger.error("Error in delete_collection_endpoint: %s", str(err))
@@ -200,6 +224,8 @@ def register_routes() -> None:
                 }
 
             success, count = storage_manager.import_library(imported_json, mode=mode)
+            if success:
+                broadcast_library_changed("import_library")
             return web.json_response({"success": success, "count": count})
         except Exception as err:
             logger.error("Error in import_library_endpoint: %s", str(err))
