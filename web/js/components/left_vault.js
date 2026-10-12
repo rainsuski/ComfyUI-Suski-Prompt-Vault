@@ -132,10 +132,11 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(manageTaxonomyBtn);
 
+        // 导入按钮：箭头朝下代表外部数据导入系统
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-        importBtn.innerHTML = renderIcon("upload", 13);
+        importBtn.innerHTML = renderIcon("download", 13);
         importBtn.title = "导入词库 JSON 包";
         importBtn.addEventListener("click", () => {
             if (typeof this.onImportTrigger === "function") {
@@ -144,10 +145,11 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(importBtn);
 
+        // 导出按钮：箭头朝上代表内部数据导出备份
         const exportBtn = document.createElement("button");
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-        exportBtn.innerHTML = renderIcon("download", 13);
+        exportBtn.innerHTML = renderIcon("upload", 13);
         exportBtn.title = "导出全量词库为 JSON 备份文件";
         exportBtn.addEventListener("click", () => {
             triggerExportPresets();

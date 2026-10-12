@@ -37,3 +37,4 @@ ENV/
 data/presets.json
 data/thumbnails/*
 !data/thumbnails/.gitkeep
+data/library.json
