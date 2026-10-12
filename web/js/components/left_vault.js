@@ -3,7 +3,7 @@
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
  * 提供分类与收藏夹双下拉联动筛选、关键词即时检索、
- * 分类与收藏夹全功能管理入口、磁贴单击选择/反选联动及矢量图标体系。
+ * 分类与收藏夹全功能管理入口、词条二次确认删除及单击即选/反选交互。
  */
 
 import { triggerExportPresets } from "../api.js";
@@ -57,6 +57,7 @@ export class LeftVaultComponent {
      * @param {(preset: any) => void} onOpenPresetModalCallback - 打开词条录入弹窗回调
      * @param {(preset: any) => void} onOpenFavoriteModalCallback - 打开收藏联动弹窗回调
      * @param {() => void} onOpenTaxonomyManagerCallback - 打开分类与收藏夹管理中心回调
+     * @param {(preset: any) => void} onDeletePresetCallback - 打开词条删除二次确认弹窗回调
      * @param {() => void} onImportTriggerCallback - 唤起导入文件选择回调
      */
     constructor(
@@ -67,6 +68,7 @@ export class LeftVaultComponent {
         onOpenPresetModalCallback,
         onOpenFavoriteModalCallback,
         onOpenTaxonomyManagerCallback,
+        onDeletePresetCallback,
         onImportTriggerCallback
     ) {
         this.container = container;
@@ -76,9 +78,9 @@ export class LeftVaultComponent {
         this.onOpenPresetModal = onOpenPresetModalCallback;
         this.onOpenFavoriteModal = onOpenFavoriteModalCallback;
         this.onOpenTaxonomyManager = onOpenTaxonomyManagerCallback;
+        this.onDeletePreset = onDeletePresetCallback;
         this.onImportTrigger = onImportTriggerCallback;
 
-        // 内部筛选过滤状态
         this.filterCategory = "ALL";
         this.filterFolder = "ALL";
         this.searchKeyword = "";
@@ -87,9 +89,6 @@ export class LeftVaultComponent {
         this.state.subscribe(() => this.renderList());
     }
 
-    /**
-     * 初始化左栏外层布局与工具栏。
-     */
     initDOM() {
         this.container.innerHTML = "";
 
@@ -97,7 +96,6 @@ export class LeftVaultComponent {
         const header = document.createElement("div");
         header.className = "prompt-vault-col-header";
 
-        // 标题行与管理/录入操作
         const titleBar = document.createElement("div");
         titleBar.className = "prompt-vault-header-title-bar";
 
@@ -110,7 +108,6 @@ export class LeftVaultComponent {
         btnGroup.style.display = "flex";
         btnGroup.style.gap = "4px";
 
-        // 新建词条按钮
         const newBtn = document.createElement("button");
         newBtn.type = "button";
         newBtn.className = "prompt-vault-btn prompt-vault-btn-primary";
@@ -123,7 +120,6 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(newBtn);
 
-        // 分类与收藏夹管理中心按钮
         const manageTaxonomyBtn = document.createElement("button");
         manageTaxonomyBtn.type = "button";
         manageTaxonomyBtn.className = "prompt-vault-btn prompt-vault-btn-default";
@@ -136,7 +132,6 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(manageTaxonomyBtn);
 
-        // 导入按钮
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
@@ -149,7 +144,6 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(importBtn);
 
-        // 导出备份按钮
         const exportBtn = document.createElement("button");
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
@@ -167,7 +161,6 @@ export class LeftVaultComponent {
         const filterRow = document.createElement("div");
         filterRow.className = "prompt-vault-toolbar-row";
 
-        // 分类下拉选择器
         this.categorySelect = document.createElement("select");
         this.categorySelect.className = "prompt-vault-select";
         this.categorySelect.style.flex = "1 1 0";
@@ -177,7 +170,6 @@ export class LeftVaultComponent {
         });
         filterRow.appendChild(this.categorySelect);
 
-        // 收藏夹下拉选择器
         this.folderSelect = document.createElement("select");
         this.folderSelect.className = "prompt-vault-select";
         this.folderSelect.style.flex = "1 1 0";
@@ -189,7 +181,6 @@ export class LeftVaultComponent {
 
         header.appendChild(filterRow);
 
-        // 搜索输入行
         const searchRow = document.createElement("div");
         searchRow.className = "prompt-vault-toolbar-row";
 
@@ -222,13 +213,9 @@ export class LeftVaultComponent {
         this.renderList();
     }
 
-    /**
-     * 刷新双下拉筛选框的选项列表。
-     */
     refreshDropdownOptions() {
         const { categories, folders } = this.getTaxonomies();
 
-        // 1. 刷新分类下拉
         const catOptions = buildCategoryHierarchyOptions(categories);
         const curCat = this.filterCategory;
         this.categorySelect.innerHTML = "";
@@ -245,7 +232,6 @@ export class LeftVaultComponent {
             this.filterCategory = "ALL";
         }
 
-        // 2. 刷新收藏夹下拉
         const curFld = this.filterFolder;
         this.folderSelect.innerHTML = `
       <option value="ALL">全部收藏夹</option>
@@ -265,9 +251,6 @@ export class LeftVaultComponent {
         }
     }
 
-    /**
-     * 重新过滤并渲染词库磁贴。
-     */
     renderList() {
         this.refreshDropdownOptions();
         const presets = this.getPresets();
@@ -277,19 +260,16 @@ export class LeftVaultComponent {
         );
 
         const filtered = presets.filter((item) => {
-            // 分类筛选
             if (this.filterCategory !== "ALL" && item.category !== this.filterCategory) {
                 return false;
             }
 
-            // 收藏夹筛选
             if (this.filterFolder === "__UNFAVORITED__") {
                 if (item.favorite) return false;
             } else if (this.filterFolder !== "ALL") {
                 if (!item.favorite || item.folder !== this.filterFolder) return false;
             }
 
-            // 关键词搜索
             if (this.searchKeyword) {
                 const titleMatch = (item.title || "").toLowerCase().includes(this.searchKeyword);
                 const promptMatch = (item.prompt || "").toLowerCase().includes(this.searchKeyword);
@@ -322,6 +302,11 @@ export class LeftVaultComponent {
                     onToggleFavorite: (targetPreset) => {
                         if (typeof this.onOpenFavoriteModal === "function") {
                             this.onOpenFavoriteModal(targetPreset);
+                        }
+                    },
+                    onDeletePreset: (targetPreset) => {
+                        if (typeof this.onDeletePreset === "function") {
+                            this.onDeletePreset(targetPreset);
                         }
                     },
                 });

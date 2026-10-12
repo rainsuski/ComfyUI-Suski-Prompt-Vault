@@ -3,7 +3,7 @@
 /**
  * 提示词词库选择器主容器与三栏布局样式表。
  * 背景采用透明/半透明继承宿主节点色彩，控件全面转向悬浮圆角胶囊风格，
- * 彻底移除 Emoji，提供双下拉分类/收藏夹过滤与椭圆胶囊状态底栏。
+ * 统一三栏底栏标高对齐、移除右栏冗余顶部分割线并提供统一椭圆胶囊交互底栏。
  */
 
 :root {
@@ -32,7 +32,7 @@
     --pv-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-/* 顶层容器：继承节点背景色，圆角浮动边界 */
+/* 顶层容器 */
 .prompt-vault-container {
     display: flex;
     flex-direction: column;
@@ -60,12 +60,11 @@
     padding: 8px;
 }
 
-/* 分隔竖线隐藏，转为栏目自身微阴影独立卡片 */
 .prompt-vault-divider {
     display: none;
 }
 
-/* 单栏卡片容器：半透明磨砂质感 */
+/* 单栏卡片容器 */
 .prompt-vault-col {
     display: flex;
     flex-direction: column;
@@ -158,7 +157,7 @@
     width: 100%;
 }
 
-/* 按钮通用规范：微圆角与悬浮感 */
+/* 按钮通用规范 */
 .prompt-vault-btn {
     display: inline-flex;
     align-items: center;
@@ -243,12 +242,15 @@
     border-radius: 3px;
 }
 
-/* 底部状态底栏：椭圆胶囊指示器风格 */
+/* 底部状态底栏：固定 40px 高度保障多栏视觉基准线严密对齐 */
 .prompt-vault-col-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 12px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 12px;
+    box-sizing: border-box;
     background-color: rgba(255, 255, 255, 0.02);
     border-top: 1px solid var(--pv-border-subtle);
     font-size: 11px;
@@ -324,12 +326,13 @@
     border-color: var(--pv-border-active);
 }
 
+/* 底部动作条：删除细分割线，保障纯净通透的悬浮质感 */
 .prompt-vault-editor-actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
     margin-top: auto;
-    padding-top: 8px;
-    border-top: 1px solid var(--pv-border-subtle);
+    padding-top: 6px;
+    border-top: none;
 }

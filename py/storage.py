@@ -2,7 +2,7 @@
 """数据持久化与文件安全读写模块。
 
 提供线程安全的 JSON 文件原子写入操作、词库 CRUD 封装、缩略图管理以及
-多级嵌套分类与收藏夹的配置树持久化服务。
+支持子级提升或级联分支清理的分类与收藏夹删除引擎。
 """
 
 import json
@@ -275,8 +275,16 @@ class StorageManager:
             success = self._write_atomic(TAXONOMIES_FILE, taxonomies)
             return success, item_data
 
-    def delete_taxonomy_item(self, item_type: str, item_id: str) -> bool:
-        """删除指定分类或收藏夹节点，并递归清理其子节点。"""
+    def delete_taxonomy_item(
+        self, item_type: str, item_id: str, delete_branch: bool = False
+    ) -> bool:
+        """删除指定分类或收藏夹节点。
+
+        规则：
+            - delete_branch 为 True: 递归级联删除当前节点及其所有子孙节点；
+            - delete_branch 为 False: 仅删除当前节点，直属子分类提升一级（继承被删节点的 parent_id），
+              关联词条被安全转为未分类。
+        """
         with self._lock:
             taxonomies: Dict[str, Any] = self._read_json_file(
                 TAXONOMIES_FILE, {"categories": [], "folders": []}
@@ -284,20 +292,55 @@ class StorageManager:
             key = "categories" if item_type == "category" else "folders"
             items: List[Dict[str, Any]] = taxonomies.get(key, [])
 
-            ids_to_delete = {item_id}
-            changed = True
-            while changed:
-                changed = False
-                for it in items:
-                    if (
-                        it.get("parent_id") in ids_to_delete
-                        and it.get("id") not in ids_to_delete
-                    ):
-                        ids_to_delete.add(it.get("id"))
-                        changed = True
+            target_node = next((it for it in items if it.get("id") == item_id), None)
+            if not target_node:
+                return False
 
-            filtered = [it for it in items if it.get("id") not in ids_to_delete]
-            taxonomies[key] = filtered
+            presets: List[Dict[str, Any]] = self._read_json_file(PRESETS_FILE, [])
+
+            if delete_branch:
+                # 级联收集整个分支所有子孙 ID
+                ids_to_delete = {item_id}
+                changed = True
+                while changed:
+                    changed = False
+                    for it in items:
+                        if (
+                            it.get("parent_id") in ids_to_delete
+                            and it.get("id") not in ids_to_delete
+                        ):
+                            ids_to_delete.add(it.get("id"))
+                            changed = True
+
+                deleted_names = {
+                    it.get("name") for it in items if it.get("id") in ids_to_delete
+                }
+                taxonomies[key] = [
+                    it for it in items if it.get("id") not in ids_to_delete
+                ]
+
+                # 涉及的所有词条归为未分类
+                if item_type == "category":
+                    for p in presets:
+                        if p.get("category") in deleted_names:
+                            p["category"] = "未分类"
+            else:
+                # 子分类提升一级
+                parent_id = target_node.get("parent_id")
+                for it in items:
+                    if it.get("parent_id") == item_id:
+                        it["parent_id"] = parent_id
+
+                taxonomies[key] = [it for it in items if it.get("id") != item_id]
+
+                # 直属词条变为未分类
+                if item_type == "category":
+                    target_name = target_node.get("name")
+                    for p in presets:
+                        if p.get("category") == target_name:
+                            p["category"] = "未分类"
+
+            self._write_atomic(PRESETS_FILE, presets)
             return self._write_atomic(TAXONOMIES_FILE, taxonomies)
 
 

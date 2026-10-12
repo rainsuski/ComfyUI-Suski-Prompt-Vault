@@ -2,7 +2,8 @@
 
 /**
  * 节点内部响应式状态机与脏状态追踪模块。
- * 管理当前节点已选磁贴实例、草稿暂存、权重增减与序列化持久绑定。
+ * 管理当前节点已选磁贴实例、草稿暂存、跨平台换行符规范化脏标记比对、
+ * 与持久化预设绑定同步以及隐藏 Widget 序列化双向绑定。
  */
 
 import { clampAndRoundWeight } from "./utils/prompt_format.js";
@@ -20,6 +21,16 @@ import { clampAndRoundWeight } from "./utils/prompt_format.js";
  * @property {boolean} is_dirty - 是否相对于关联预设发生了草稿修改
  * @property {string} thumbnail - 缩略图路径
  */
+
+/**
+ * 规范化文本内容，消除换行符 (CRLF 与 LF) 及首尾多余空白引起的比较偏差。
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeText(text) {
+    if (!text) return "";
+    return text.replace(/\r\n/g, "\n").trim();
+}
 
 export class VaultNodeState {
     /**
@@ -46,7 +57,7 @@ export class VaultNodeState {
     }
 
     /**
-     * 触发全部订阅者更新并同步将状态序列化至节点隐藏 Widget。
+     * 触发全部订阅者更新并同步序列化至节点数据 Widget。
      */
     notify() {
         this.syncToNodeWidget();
@@ -60,7 +71,7 @@ export class VaultNodeState {
     }
 
     /**
-     * 从 JSON 序列化字符串恢复已选磁贴列表（加载工作流时调用）。
+     * 从 JSON 序列化字符串恢复已选磁贴列表。
      * @param {string} jsonString
      */
     loadFromSerialized(jsonString) {
@@ -83,7 +94,7 @@ export class VaultNodeState {
     }
 
     /**
-     * 将当前磁贴数组同步至 LiteGraph 节点的隐藏 widget，确保工作流保存无损。
+     * 将当前磁贴数组同步至 LiteGraph 节点的数据 Widget。
      */
     syncToNodeWidget() {
         if (!this.node || !this.node.widgets) return;
@@ -129,7 +140,7 @@ export class VaultNodeState {
             ref_preset_id: preset.id || null,
             title: preset.title || "未命名词条",
             prompt: preset.prompt || "",
-            category: preset.category || "默认",
+            category: preset.category || "未分类",
             weight: 1.0,
             enabled: true,
             is_dirty: false,
@@ -152,7 +163,7 @@ export class VaultNodeState {
             ref_preset_id: null,
             title: "临时空白词条",
             prompt: "",
-            category: "临时",
+            category: "未分类",
             weight: 1.0,
             enabled: true,
             is_dirty: true,
@@ -211,9 +222,9 @@ export class VaultNodeState {
     }
 
     /**
-     * 滚轮微调磁贴权重（步长 0.1，只读胶囊调用）。
+     * 滚轮微调磁贴权重（步长 0.1）。
      * @param {string} instanceId
-     * @param {number} delta - 增减方向 (+0.1 或 -0.1)
+     * @param {number} delta
      */
     adjustTileWeight(instanceId, delta) {
         const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
@@ -237,10 +248,10 @@ export class VaultNodeState {
     }
 
     /**
-     * 临时修改当前磁贴内容并更新脏标记。
+     * 临时修改当前磁贴内容并更新脏标记（对齐换行符与空格）。
      * @param {string} instanceId
      * @param {{ title?: string, prompt?: string, category?: string }} updates
-     * @param {any[]} [allPresets=[]] - 全量词库列表（用于比对是否与原预设产生偏差）
+     * @param {any[]} [allPresets=[]]
      */
     updateTileContent(instanceId, updates, allPresets = []) {
         const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
@@ -250,16 +261,15 @@ export class VaultNodeState {
         if (updates.prompt !== undefined) tile.prompt = updates.prompt;
         if (updates.category !== undefined) tile.category = updates.category;
 
-        // 比对脏状态
         if (!tile.ref_preset_id) {
             tile.is_dirty = true;
         } else {
             const original = allPresets.find((p) => p.id === tile.ref_preset_id);
             if (original) {
-                tile.is_dirty =
-                    original.title !== tile.title ||
-                    original.prompt !== tile.prompt ||
-                    original.category !== tile.category;
+                const titleChanged = normalizeText(original.title) !== normalizeText(tile.title);
+                const promptChanged = normalizeText(original.prompt) !== normalizeText(tile.prompt);
+                const categoryChanged = (original.category || "未分类") !== (tile.category || "未分类");
+                tile.is_dirty = titleChanged || promptChanged || categoryChanged;
             } else {
                 tile.is_dirty = true;
             }
@@ -269,9 +279,27 @@ export class VaultNodeState {
     }
 
     /**
+     * 将磁贴与新保存的持久化预设项绑定并清除草稿脏标记。
+     * @param {string} instanceId
+     * @param {any} savedPreset
+     */
+    markTileAsSavedToPreset(instanceId, savedPreset) {
+        const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (!tile || !savedPreset) return;
+
+        tile.ref_preset_id = savedPreset.id;
+        tile.title = savedPreset.title || tile.title;
+        tile.prompt = savedPreset.prompt || tile.prompt;
+        tile.category = savedPreset.category || tile.category;
+        tile.thumbnail = savedPreset.thumbnail || tile.thumbnail;
+        tile.is_dirty = false;
+        this.notify();
+    }
+
+    /**
      * 重置磁贴内容回引用的预设初始值。
      * @param {string} instanceId
-     * @param {any[]} allPresets - 全量词库列表
+     * @param {any[]} allPresets
      */
     revertTileToPreset(instanceId, allPresets) {
         const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
@@ -282,7 +310,7 @@ export class VaultNodeState {
 
         tile.title = original.title;
         tile.prompt = original.prompt;
-        tile.category = original.category;
+        tile.category = original.category || "未分类";
         tile.thumbnail = original.thumbnail || "";
         tile.is_dirty = false;
         this.notify();

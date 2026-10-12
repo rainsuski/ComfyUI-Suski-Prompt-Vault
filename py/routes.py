@@ -1,7 +1,8 @@
 # File: ComfyUI-Suski-Prompt-Vault/py/routes.py
 """ComfyUI aiohttp Web 服务端路由控制模块。
 
-提供词库条目与分类/收藏夹树状体系的 RESTful 接口支持。
+负责通过 PromptServer.instance.routes 注册词库获取、修改、删除、批量导入导出、
+多级分类与收藏夹管理（支持分支级联与子级提升删除）及缩略图文件静态读取接口。
 """
 
 import json
@@ -26,14 +27,16 @@ def register_routes() -> None:
 
     @routes.get("/prompt_vault/api/presets")
     async def get_presets_endpoint(request: web.Request) -> web.Response:
-        """获取全量词库条目与基础分类。"""
+        """获取全量词库条目与分类列表。"""
         try:
             presets, categories = storage_manager.get_all_presets()
+            taxonomies = storage_manager.get_taxonomies()
             return web.json_response(
                 {
                     "success": True,
                     "data": presets,
                     "categories": categories,
+                    "taxonomies": taxonomies,
                 }
             )
         except Exception as err:
@@ -42,7 +45,7 @@ def register_routes() -> None:
 
     @routes.post("/prompt_vault/api/presets")
     async def upsert_preset_endpoint(request: web.Request) -> web.Response:
-        """创建或更新词库条目。"""
+        """创建或更新词库条目（支持 multipart 文件上传包含缩略图及标准 JSON）。"""
         try:
             content_type = request.content_type or ""
             preset_data: Dict[str, Any] = {}
@@ -100,6 +103,44 @@ def register_routes() -> None:
             logger.error("Error in delete_preset_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
+    @routes.get("/prompt_vault/api/taxonomies")
+    async def get_taxonomies_endpoint(request: web.Request) -> web.Response:
+        """获取分类与收藏夹配置树及数量统计。"""
+        try:
+            data = storage_manager.get_taxonomies()
+            return web.json_response({"success": True, "data": data})
+        except Exception as err:
+            logger.error("Error in get_taxonomies_endpoint: %s", str(err))
+            return web.json_response({"success": False, "error": str(err)}, status=500)
+
+    @routes.post("/prompt_vault/api/taxonomies/{type}")
+    async def upsert_taxonomy_endpoint(request: web.Request) -> web.Response:
+        """新增或更新分类/收藏夹项。"""
+        try:
+            item_type = request.match_info.get("type", "category")
+            payload = await request.json()
+            success, item = storage_manager.upsert_taxonomy_item(item_type, payload)
+            return web.json_response({"success": success, "data": item})
+        except Exception as err:
+            logger.error("Error in upsert_taxonomy_endpoint: %s", str(err))
+            return web.json_response({"success": False, "error": str(err)}, status=400)
+
+    @routes.delete("/prompt_vault/api/taxonomies/{type}/{id}")
+    async def delete_taxonomy_endpoint(request: web.Request) -> web.Response:
+        """删除分类/收藏夹项（支持 query 参数 branch=true 级联删除分支）。"""
+        try:
+            item_type = request.match_info.get("type", "category")
+            item_id = request.match_info.get("id", "")
+            delete_branch = request.query.get("branch", "false").lower() == "true"
+
+            success = storage_manager.delete_taxonomy_item(
+                item_type, item_id, delete_branch=delete_branch
+            )
+            return web.json_response({"success": success})
+        except Exception as err:
+            logger.error("Error in delete_taxonomy_endpoint: %s", str(err))
+            return web.json_response({"success": False, "error": str(err)}, status=500)
+
     @routes.post("/prompt_vault/api/import")
     async def import_presets_endpoint(request: web.Request) -> web.Response:
         """导入 JSON 格式词库。"""
@@ -138,7 +179,7 @@ def register_routes() -> None:
 
     @routes.get("/prompt_vault/api/export")
     async def export_presets_endpoint(request: web.Request) -> web.Response:
-        """导出全量词库并下载。"""
+        """导出全量词库并以 JSON 文件格式触发下载。"""
         try:
             presets, _ = storage_manager.get_all_presets()
             payload = json.dumps(presets, ensure_ascii=False, indent=2)
@@ -153,7 +194,7 @@ def register_routes() -> None:
 
     @routes.get("/prompt_vault/api/thumbnails/{name}")
     async def get_thumbnail_endpoint(request: web.Request) -> web.Response:
-        """获取缩略图文件。"""
+        """获取缩略图静态文件资源。"""
         try:
             raw_filename = request.match_info.get("name", "")
             safe_filename = os.path.basename(raw_filename)
@@ -173,38 +214,3 @@ def register_routes() -> None:
         except Exception as err:
             logger.error("Error in get_thumbnail_endpoint: %s", str(err))
             return web.Response(status=500, text=str(err))
-
-    @routes.get("/prompt_vault/api/taxonomies")
-    async def get_taxonomies_endpoint(request: web.Request) -> web.Response:
-        """获取全部分类树与收藏夹体系。"""
-        try:
-            taxonomies = storage_manager.get_taxonomies()
-            return web.json_response({"success": True, "data": taxonomies})
-        except Exception as err:
-            logger.error("Error in get_taxonomies_endpoint: %s", str(err))
-            return web.json_response({"success": False, "error": str(err)}, status=500)
-
-    @routes.post("/prompt_vault/api/taxonomies")
-    async def upsert_taxonomy_endpoint(request: web.Request) -> web.Response:
-        """新增或更新分类或收藏夹节点。"""
-        try:
-            payload = await request.json()
-            item_type = payload.get("type", "category")
-            item_data = payload.get("data", {})
-            success, saved = storage_manager.upsert_taxonomy_item(item_type, item_data)
-            return web.json_response({"success": success, "data": saved})
-        except Exception as err:
-            logger.error("Error in upsert_taxonomy_endpoint: %s", str(err))
-            return web.json_response({"success": False, "error": str(err)}, status=400)
-
-    @routes.delete("/prompt_vault/api/taxonomies/{type}/{id}")
-    async def delete_taxonomy_endpoint(request: web.Request) -> web.Response:
-        """删除分类或收藏夹节点。"""
-        try:
-            item_type = request.match_info.get("type", "category")
-            item_id = request.match_info.get("id", "")
-            success = storage_manager.delete_taxonomy_item(item_type, item_id)
-            return web.json_response({"success": success})
-        except Exception as err:
-            logger.error("Error in delete_taxonomy_endpoint: %s", str(err))
-            return web.json_response({"success": False, "error": str(err)}, status=500)

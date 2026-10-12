@@ -6,45 +6,8 @@
  */
 
 /**
- * 词库条目数据类型定义
- * @typedef {Object} PresetItem
- * @property {string} id
- * @property {string} title
- * @property {string} prompt
- * @property {string} category
- * @property {string[]} tags
- * @property {boolean} favorite
- * @property {string} folder
- * @property {string} note
- * @property {string} thumbnail
- * @property {number} created_at
- * @property {number} updated_at
- */
-
-/**
- * 分类节点数据类型定义
- * @typedef {Object} CategoryItem
- * @property {string} id
- * @property {string} name
- * @property {string|null} parent_id
- * @property {string} color
- * @property {number} order
- * @property {number} [count]
- */
-
-/**
- * 收藏夹节点数据类型定义
- * @typedef {Object} FolderItem
- * @property {string} id
- * @property {string} name
- * @property {string|null} parent_id
- * @property {number} order
- * @property {number} [count]
- */
-
-/**
  * 获取全量词库条目与层级分类/收藏夹配置。
- * @returns {Promise<{ success: boolean, presets: PresetItem[], categories: string[], taxonomies: { categories: CategoryItem[], folders: FolderItem[] } }>}
+ * @returns {Promise<{ success: boolean, presets: any[], categories: string[], taxonomies: { categories: any[], folders: any[] } }>}
  */
 export async function fetchPresets() {
     try {
@@ -75,9 +38,9 @@ export async function fetchPresets() {
 
 /**
  * 新增或更新词库条目（支持附带图片文件）。
- * @param {Partial<PresetItem>} presetData - 词库条目属性
+ * @param {any} presetData - 词库条目属性
  * @param {File|Blob|null} [thumbnailFile=null] - 缩略图二进制文件
- * @returns {Promise<{ success: boolean, data?: PresetItem, error?: string }>}
+ * @returns {Promise<{ success: boolean, data?: any, error?: string }>}
  */
 export async function upsertPreset(presetData, thumbnailFile = null) {
     try {
@@ -129,7 +92,7 @@ export async function deletePreset(presetId) {
 
 /**
  * 获取全量分类与收藏夹配置树。
- * @returns {Promise<{ success: boolean, data: { categories: CategoryItem[], folders: FolderItem[] } }>}
+ * @returns {Promise<{ success: boolean, data: { categories: any[], folders: any[] } }>}
  */
 export async function fetchTaxonomies() {
     try {
@@ -150,7 +113,7 @@ export async function fetchTaxonomies() {
 /**
  * 新增或更新分类或收藏夹项。
  * @param {"category"|"folder"} type - 节点类型
- * @param {Partial<CategoryItem|FolderItem>} payload - 节点数据
+ * @param {any} payload - 节点数据
  * @returns {Promise<{ success: boolean, data?: any }>}
  */
 export async function upsertTaxonomyItem(type, payload) {
@@ -171,15 +134,17 @@ export async function upsertTaxonomyItem(type, payload) {
 }
 
 /**
- * 删除分类或收藏夹项及其子级。
+ * 删除分类或收藏夹项（支持级联删除整个分支）。
  * @param {"category"|"folder"} type - 节点类型
  * @param {string} id - 节点 ID
+ * @param {boolean} [deleteBranch=false] - 是否删除整个分类分支
  * @returns {Promise<boolean>}
  */
-export async function deleteTaxonomyItem(type, id) {
+export async function deleteTaxonomyItem(type, id, deleteBranch = false) {
     try {
+        const query = deleteBranch ? "?branch=true" : "?branch=false";
         const response = await fetch(
-            `/prompt_vault/api/taxonomies/${encodeURIComponent(type)}/${encodeURIComponent(id)}`,
+            `/prompt_vault/api/taxonomies/${encodeURIComponent(type)}/${encodeURIComponent(id)}${query}`,
             { method: "DELETE" }
         );
         if (!response.ok) return false;

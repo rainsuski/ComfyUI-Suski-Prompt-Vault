@@ -2,8 +2,9 @@
 
 /**
  * 右侧详情与实时编辑器组件。
- * 保持持久 DOM 引用以杜绝输入过程中的焦点丢失，
- * 所属分类全面升级为多级树状下拉选择器，完美兼容 Autocomplete Plus 联想补全。
+ * 保持持久 DOM 引用以杜绝打字过程中的焦点丢失，
+ * 多重监听 input/change/blur 以兼容外部三方格式化插件，
+ * 点击入库时实时读取最新 DOM 内容并杜绝未格式化旧文本流出。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
@@ -122,8 +123,9 @@ export class RightEditorComponent {
         this.titleInput = document.createElement("input");
         this.titleInput.type = "text";
         this.titleInput.className = "prompt-vault-input";
-        this.titleInput.placeholder = "输入磁贴名称...";
-        this.titleInput.addEventListener("input", () => {
+        this.titleInput.placeholder = "";
+
+        const syncTitle = () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
                 this.state.updateTileContent(
@@ -132,11 +134,13 @@ export class RightEditorComponent {
                     this.getPresets()
                 );
             }
-        });
+        };
+        this.titleInput.addEventListener("input", syncTitle);
+        this.titleInput.addEventListener("change", syncTitle);
         titleGroup.appendChild(this.titleInput);
         this.formContainer.appendChild(titleGroup);
 
-        // 2. 分类编辑项：升级为层级下拉框
+        // 2. 分类编辑项：层级下拉框
         const catGroup = document.createElement("div");
         catGroup.className = "prompt-vault-editor-group";
         catGroup.innerHTML = `<label class="prompt-vault-editor-label">所属分类</label>`;
@@ -155,7 +159,7 @@ export class RightEditorComponent {
         catGroup.appendChild(this.catSelect);
         this.formContainer.appendChild(catGroup);
 
-        // 3. 提示词主体多行通用文本域
+        // 3. 提示词主体多行通用文本域：同时监听 input/change/blur 以捕获三方插件自动格式化后的内容
         const promptGroup = document.createElement("div");
         promptGroup.className = "prompt-vault-editor-group";
         promptGroup.style.flex = "1 1 0";
@@ -165,9 +169,10 @@ export class RightEditorComponent {
 
         this.textarea = document.createElement("textarea");
         this.textarea.className = "prompt-vault-editor-textarea comfy-multiline-input";
-        this.textarea.placeholder = "输入提示词，支持逗号分隔与原生加权语法...";
+        this.textarea.placeholder = "";
         this.textarea.spellcheck = false;
-        this.textarea.addEventListener("input", () => {
+
+        const syncPrompt = () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
                 this.state.updateTileContent(
@@ -176,7 +181,11 @@ export class RightEditorComponent {
                     this.getPresets()
                 );
             }
-        });
+        };
+        this.textarea.addEventListener("input", syncPrompt);
+        this.textarea.addEventListener("change", syncPrompt);
+        this.textarea.addEventListener("blur", syncPrompt);
+
         promptGroup.appendChild(this.textarea);
         this.formContainer.appendChild(promptGroup);
 
@@ -207,8 +216,22 @@ export class RightEditorComponent {
         this.saveToVaultBtn.title = "将此词条正式收录或更新至本地持久化词库";
         this.saveToVaultBtn.addEventListener("click", () => {
             const activeTile = this.state.getActiveTile();
-            if (activeTile && typeof this.onSaveToVault === "function") {
-                this.onSaveToVault(activeTile);
+            if (activeTile) {
+                // 点击瞬间强制用当前 DOM 文本域内最新格式化后的内容更新状态机，杜绝格式化前旧文本流出
+                this.state.updateTileContent(
+                    activeTile.instance_id,
+                    {
+                        title: this.titleInput.value.trim(),
+                        category: this.catSelect.value,
+                        prompt: this.textarea.value,
+                    },
+                    this.getPresets()
+                );
+
+                if (typeof this.onSaveToVault === "function") {
+                    // 获取更新后的最新快照传入弹窗
+                    this.onSaveToVault(this.state.getActiveTile());
+                }
             }
         });
         actionsRow.appendChild(this.saveToVaultBtn);
@@ -220,9 +243,6 @@ export class RightEditorComponent {
         this.updateView();
     }
 
-    /**
-     * 刷新分类下拉框选项。
-     */
     refreshCategoryOptions() {
         const categories = this.getCategories();
         const options = buildCategoryHierarchyOptions(categories);
@@ -241,9 +261,6 @@ export class RightEditorComponent {
         }
     }
 
-    /**
-     * 响应状态更新，更新控件数据且不打断当前正在输入的焦点。
-     */
     updateView() {
         this.refreshCategoryOptions();
         const activeTile = this.state.getActiveTile();
@@ -259,9 +276,14 @@ export class RightEditorComponent {
         this.emptyState.style.display = "none";
         this.formContainer.style.display = "flex";
 
-        // 仅在切换到不同磁贴时同步更新输入控件的值
+        // 仅在切换到不同磁贴实例或当前磁贴已同步保存时，同步重写输入框内容
         if (this.renderedInstanceId !== activeTile.instance_id) {
             this.renderedInstanceId = activeTile.instance_id;
+            this.titleInput.value = activeTile.title || "";
+            this.catSelect.value = activeTile.category || "未分类";
+            this.textarea.value = activeTile.prompt || "";
+        } else if (!activeTile.is_dirty) {
+            // 磁贴刚被重置或入库成功，同步刷新文本框展示值
             this.titleInput.value = activeTile.title || "";
             this.catSelect.value = activeTile.category || "未分类";
             this.textarea.value = activeTile.prompt || "";

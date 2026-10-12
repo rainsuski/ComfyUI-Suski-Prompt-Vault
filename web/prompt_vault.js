@@ -3,7 +3,7 @@
 /**
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
  * 负责装配三栏布局、管理全局分类与收藏夹状态树、
- * 绑定生命周期持久化与全套弹窗交互。
+ * 绑定生命周期持久化、预设保存后脏标记同步清理与全套弹窗交互。
  */
 
 import { app } from "../../../scripts/app.js";
@@ -14,6 +14,7 @@ import {
     FavoriteModalManager,
     PresetModalManager,
     TaxonomyModalManager,
+    TileDeleteConfirmModal,
 } from "./js/components/modal.js";
 import { RightEditorComponent } from "./js/components/right_editor.js";
 import { VaultNodeState } from "./js/state.js";
@@ -26,10 +27,6 @@ const TARGET_NODE_TYPE = "PromptVaultSelector";
 let globalPresets = [];
 let globalTaxonomies = { categories: [], folders: [] };
 
-/**
- * 动态注入样式表链接。
- * @param {string} href
- */
 function injectStyleSheet(href) {
     const existing = document.querySelector(`link[href="${href}"]`);
     if (!existing) {
@@ -41,15 +38,10 @@ function injectStyleSheet(href) {
     }
 }
 
-// 预加载样式表
 injectStyleSheet(new URL("./css/prompt_vault.css", import.meta.url).href);
 injectStyleSheet(new URL("./css/tile.css", import.meta.url).href);
 injectStyleSheet(new URL("./css/modal.css", import.meta.url).href);
 
-/**
- * 全量刷新全局词库与层级分类数据。
- * @returns {Promise<void>}
- */
 async function refreshGlobalData() {
     const [presetsRes, taxonomiesRes] = await Promise.all([
         fetchPresets(),
@@ -84,16 +76,13 @@ app.registerExtension({
 
             const node = this;
 
-            // 1. 节点规格与防折叠
             node.flags = node.flags || {};
             node.flags.no_collapse = true;
             node.size = [1120, 620];
 
-            // 2. 状态机
             const state = new VaultNodeState(node);
             node._vaultState = state;
 
-            // 3. 内部序列化专用数据插槽隐藏与自动捕获
             let dataWidget = node.widgets?.find((w) => w.name === "selected_tiles_data");
             if (!dataWidget) {
                 dataWidget = node.addWidget("text", "selected_tiles_data", "[]", () => { });
@@ -102,7 +91,6 @@ app.registerExtension({
             dataWidget.draw = () => { };
             dataWidget.serializeValue = () => JSON.stringify(state.selectedTiles);
 
-            // 4. 三栏 DOM 容器构造
             const container = document.createElement("div");
             container.className = "prompt-vault-container";
             isolateCanvasEvents(container);
@@ -124,7 +112,6 @@ app.registerExtension({
 
             container.appendChild(grid);
 
-            // 5. 隐藏 JSON 导入专用文件域
             const importInput = document.createElement("input");
             importInput.type = "file";
             importInput.accept = ".json";
@@ -144,7 +131,6 @@ app.registerExtension({
             });
             container.appendChild(importInput);
 
-            // 6. 实例化全套弹窗管理器
             const notifyRefresh = async () => {
                 await refreshGlobalData();
                 state.notify();
@@ -155,6 +141,10 @@ app.registerExtension({
                 notifyRefresh
             );
 
+            const tileDeleteConfirmModal = new TileDeleteConfirmModal(
+                notifyRefresh
+            );
+
             const favoriteModalManager = new FavoriteModalManager(
                 () => globalTaxonomies.folders,
                 notifyRefresh
@@ -162,10 +152,10 @@ app.registerExtension({
 
             const taxonomyModalManager = new TaxonomyModalManager(
                 () => globalTaxonomies,
+                () => globalPresets,
                 notifyRefresh
             );
 
-            // 7. 挂载左栏词库组件
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -174,10 +164,10 @@ app.registerExtension({
                 (preset) => presetModalManager.open(preset),
                 (preset) => favoriteModalManager.handleToggleFavorite(preset),
                 () => taxonomyModalManager.open(),
+                (preset) => tileDeleteConfirmModal.open(preset),
                 () => importInput.click()
             );
 
-            // 8. 挂载中栏已选组件
             new MiddleSelectedComponent(
                 colMiddle,
                 state,
@@ -192,7 +182,6 @@ app.registerExtension({
                 }
             );
 
-            // 9. 挂载右栏编辑器组件
             new RightEditorComponent(
                 colRight,
                 state,
@@ -206,10 +195,17 @@ app.registerExtension({
                         category: tileDraft.category,
                         thumbnail: tileDraft.thumbnail,
                     });
+                    // 接收服务端返回的有效实体，精准同步清除脏标记并重置 ref_preset_id
+                    presetModalManager.onSaved = async (savedData) => {
+                        await refreshGlobalData();
+                        if (savedData) {
+                            state.markTileAsSavedToPreset(tileDraft.instance_id, savedData);
+                        }
+                        state.notify();
+                    };
                 }
             );
 
-            // 10. 挂载 DOM Widget
             node.addDOMWidget("prompt_vault_ui", "custom", container, {
                 serialize: false,
                 getValue() {
@@ -224,7 +220,6 @@ app.registerExtension({
             });
         };
 
-        // 工作流加载生命周期钩子
         const origOnConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function (info) {
             if (typeof origOnConfigure === "function") {
@@ -239,7 +234,6 @@ app.registerExtension({
             }
         };
 
-        // 尺寸限制约束
         const origOnResize = nodeType.prototype.onResize;
         nodeType.prototype.onResize = function (size) {
             if (typeof origOnResize === "function") {
