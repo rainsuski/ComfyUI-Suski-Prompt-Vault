@@ -1,0 +1,20 @@
+# File: ComfyUI-Suski-Prompt-Vault/pyproject.toml
+
+[project]
+name = "comfyui-suski-prompt-vault"
+version = "1.0.0"
+description = "A powerful, modular prompt management and visual dynamic selector for ComfyUI."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.8.0"
+]
+license = { text = "MIT" }
+authors = [
+    { name = "Suski" }
+]
+keywords = ["comfyui", "custom-nodes", "prompt", "prompt-manager", "workflow"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["py*"]

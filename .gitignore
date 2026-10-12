@@ -1,0 +1,39 @@
+# File: ComfyUI-Suski-Prompt-Vault/.gitignore
+
+# Python 缓存与构建文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境与本地 IDE
+.env
+.venv
+env/
+venv/
+ENV/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 用户运行时持久化数据 (仅保留目录结构占位，不追踪用户词库与图片)
+data/presets.json
+data/thumbnails/*
+!data/thumbnails/.gitkeep

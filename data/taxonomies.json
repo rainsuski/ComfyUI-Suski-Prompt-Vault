@@ -1,0 +1,33 @@
+{
+  "categories": [
+    {
+      "id": "cat_role",
+      "name": "角色",
+      "parent_id": null,
+      "color": "#a855f7",
+      "order": 0
+    },
+    {
+      "id": "cat_clothing",
+      "name": "服装",
+      "parent_id": null,
+      "color": "#3b82f6",
+      "order": 1
+    },
+    {
+      "id": "cat_quality",
+      "name": "质量词",
+      "parent_id": null,
+      "color": "#06b6d4",
+      "order": 2
+    }
+  ],
+  "folders": [
+    {
+      "id": "fld_default",
+      "name": "默认收藏夹",
+      "parent_id": null,
+      "order": 0
+    }
+  ]
+}

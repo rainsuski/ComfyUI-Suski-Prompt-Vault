@@ -1,0 +1,335 @@
+/* File: ComfyUI-Suski-Prompt-Vault/web/css/prompt_vault.css */
+
+/**
+ * 提示词词库选择器主容器与三栏布局样式表。
+ * 背景采用透明/半透明继承宿主节点色彩，控件全面转向悬浮圆角胶囊风格，
+ * 彻底移除 Emoji，提供双下拉分类/收藏夹过滤与椭圆胶囊状态底栏。
+ */
+
+:root {
+    --pv-bg-base: transparent;
+    --pv-bg-surface: rgba(24, 25, 32, 0.72);
+    --pv-bg-card: rgba(36, 38, 48, 0.85);
+    --pv-bg-card-hover: rgba(48, 52, 66, 0.95);
+    --pv-bg-card-active: rgba(59, 130, 246, 0.16);
+    --pv-bg-input: rgba(18, 19, 25, 0.88);
+    --pv-border-subtle: rgba(255, 255, 255, 0.08);
+    --pv-border-strong: rgba(255, 255, 255, 0.18);
+    --pv-border-active: #3b82f6;
+    --pv-text-primary: #f3f4f6;
+    --pv-text-secondary: #9ca3af;
+    --pv-text-muted: #6b7280;
+    --pv-accent-primary: #3b82f6;
+    --pv-accent-hover: #2563eb;
+    --pv-accent-warning: #f59e0b;
+    --pv-accent-danger: #ef4444;
+    --pv-radius-sm: 6px;
+    --pv-radius-md: 8px;
+    --pv-radius-lg: 12px;
+    --pv-radius-pill: 20px;
+    --pv-shadow-floating: 0 4px 14px rgba(0, 0, 0, 0.35);
+    --pv-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --pv-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* 顶层容器：继承节点背景色，圆角浮动边界 */
+.prompt-vault-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    background-color: var(--pv-bg-base);
+    color: var(--pv-text-primary);
+    font-family: var(--pv-font-family);
+    font-size: 13px;
+    line-height: 1.5;
+    user-select: none;
+    overflow: hidden;
+    border-radius: var(--pv-radius-lg);
+}
+
+/* 三栏网格布局 */
+.prompt-vault-grid {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
+    gap: 8px;
+    padding: 8px;
+}
+
+/* 分隔竖线隐藏，转为栏目自身微阴影独立卡片 */
+.prompt-vault-divider {
+    display: none;
+}
+
+/* 单栏卡片容器：半透明磨砂质感 */
+.prompt-vault-col {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-sizing: border-box;
+    background-color: var(--pv-bg-surface);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    box-shadow: var(--pv-shadow-floating);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+}
+
+.prompt-vault-col-left {
+    flex: 1 1 0;
+    min-width: 290px;
+}
+
+.prompt-vault-col-middle {
+    flex: 1 1 0;
+    min-width: 290px;
+}
+
+.prompt-vault-col-right {
+    flex: 1 1 0;
+    min-width: 300px;
+}
+
+/* 栏目头部工具栏 */
+.prompt-vault-col-header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
+}
+
+.prompt-vault-header-title-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.prompt-vault-col-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.prompt-vault-toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+/* 悬浮圆角输入框与下拉选择框 */
+.prompt-vault-input,
+.prompt-vault-select {
+    box-sizing: border-box;
+    height: 28px;
+    padding: 0 10px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-pill);
+    color: var(--pv-text-primary);
+    font-size: 12px;
+    outline: none;
+    transition: all 0.15s ease;
+}
+
+.prompt-vault-input:focus,
+.prompt-vault-select:focus {
+    border-color: var(--pv-border-active);
+    box-shadow: 0 0 0 1px var(--pv-border-active);
+}
+
+.prompt-vault-input::placeholder {
+    color: var(--pv-text-muted);
+}
+
+.prompt-vault-search-box {
+    flex: 1 1 0;
+    width: 100%;
+}
+
+/* 按钮通用规范：微圆角与悬浮感 */
+.prompt-vault-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-radius: var(--pv-radius-pill);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--pv-border-subtle);
+    background-color: var(--pv-bg-card);
+    color: var(--pv-text-primary);
+    user-select: none;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.prompt-vault-btn:hover:not(:disabled) {
+    background-color: var(--pv-bg-card-hover);
+    border-color: var(--pv-border-strong);
+}
+
+.prompt-vault-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.prompt-vault-btn-primary {
+    background-color: var(--pv-accent-primary);
+    border-color: transparent;
+    color: #ffffff;
+}
+
+.prompt-vault-btn-primary:hover:not(:disabled) {
+    background-color: var(--pv-accent-hover);
+}
+
+.prompt-vault-btn-danger {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--pv-accent-danger);
+}
+
+.prompt-vault-btn-danger:hover:not(:disabled) {
+    background-color: rgba(239, 68, 68, 0.15);
+}
+
+.prompt-vault-btn-icon {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    flex-shrink: 0;
+    border-radius: var(--pv-radius-sm);
+}
+
+/* 滚动视口 */
+.prompt-vault-list-viewport {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-sizing: border-box;
+}
+
+.prompt-vault-list-viewport::-webkit-scrollbar,
+.prompt-vault-editor-textarea::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+.prompt-vault-list-viewport::-webkit-scrollbar-thumb,
+.prompt-vault-editor-textarea::-webkit-scrollbar-thumb {
+    background: var(--pv-border-strong);
+    border-radius: 3px;
+}
+
+/* 底部状态底栏：椭圆胶囊指示器风格 */
+.prompt-vault-col-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid var(--pv-border-subtle);
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    flex-shrink: 0;
+}
+
+/* 空白占位 */
+.prompt-vault-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 140px;
+    color: var(--pv-text-muted);
+    text-align: center;
+    gap: 8px;
+    padding: 24px;
+    box-sizing: border-box;
+}
+
+.prompt-vault-empty-icon {
+    opacity: 0.5;
+}
+
+/* 右侧编辑区控件排布 */
+.prompt-vault-editor-body {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 10px;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+.prompt-vault-editor-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.prompt-vault-editor-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--pv-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.prompt-vault-editor-textarea {
+    width: 100%;
+    flex: 1 1 0;
+    min-height: 180px;
+    box-sizing: border-box;
+    padding: 10px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    color: var(--pv-text-primary);
+    font-family: var(--pv-font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    user-select: text;
+    transition: border-color 0.15s ease;
+}
+
+.prompt-vault-editor-textarea:focus {
+    border-color: var(--pv-border-active);
+}
+
+.prompt-vault-editor-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--pv-border-subtle);
+}

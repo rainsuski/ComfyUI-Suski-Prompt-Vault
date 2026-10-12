@@ -1,0 +1,282 @@
+/* File: ComfyUI-Suski-Prompt-Vault/web/css/modal.css */
+
+/**
+ * 预设录入弹窗、轻量收藏夹联动弹窗与分类与收藏夹管理弹窗样式表。
+ * 包含多级树状嵌套排布、色彩指示条、展开折叠以及悬浮圆角质感。
+ */
+
+.prompt-vault-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 20px;
+    box-sizing: border-box;
+    user-select: none;
+}
+
+.prompt-vault-modal {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 660px;
+    max-height: 90vh;
+    background-color: #1e2026;
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-lg);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55);
+    box-sizing: border-box;
+    overflow: hidden;
+    animation: promptVaultModalFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes promptVaultModalFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.prompt-vault-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--pv-border-subtle);
+}
+
+.prompt-vault-modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+}
+
+.prompt-vault-modal-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--pv-radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--pv-text-muted);
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.prompt-vault-modal-close:hover {
+    background-color: var(--pv-bg-card-hover);
+    color: var(--pv-text-primary);
+}
+
+.prompt-vault-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+    overflow-y: auto;
+    box-sizing: border-box;
+    max-height: calc(90vh - 120px);
+}
+
+.prompt-vault-form-row {
+    display: flex;
+    gap: 14px;
+    width: 100%;
+}
+
+.prompt-vault-form-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 0;
+}
+
+.prompt-vault-form-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pv-text-secondary);
+}
+
+.prompt-vault-form-input,
+.prompt-vault-form-textarea,
+.prompt-vault-form-select {
+    box-sizing: border-box;
+    width: 100%;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-sm);
+    color: var(--pv-text-primary);
+    font-size: 12px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.prompt-vault-form-input:focus,
+.prompt-vault-form-textarea:focus,
+.prompt-vault-form-select:focus {
+    border-color: var(--pv-accent-primary);
+}
+
+.prompt-vault-form-textarea {
+    min-height: 110px;
+    resize: vertical;
+    font-family: var(--pv-font-mono);
+    line-height: 1.5;
+    user-select: text;
+}
+
+.prompt-vault-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 18px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid var(--pv-border-subtle);
+}
+
+/* ========================================================
+   分类与收藏夹管理弹窗专属样式 (完全对齐参考设计)
+   ======================================================== */
+
+.prompt-vault-tab-switch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px;
+    background-color: var(--pv-bg-input);
+    border-radius: var(--pv-radius-pill);
+    width: fit-content;
+    margin: 0 auto 12px auto;
+    border: 1px solid var(--pv-border-subtle);
+}
+
+.prompt-vault-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 20px;
+    border-radius: var(--pv-radius-pill);
+    border: none;
+    background: transparent;
+    color: var(--pv-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.prompt-vault-tab-btn.is-active {
+    background-color: rgba(59, 130, 246, 0.25);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.prompt-vault-taxonomy-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.prompt-vault-taxonomy-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* 树节点单项卡片 */
+.prompt-vault-tree-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    box-sizing: border-box;
+    transition: all 0.12s ease;
+}
+
+.prompt-vault-tree-item:hover {
+    background-color: var(--pv-bg-card-hover);
+    border-color: var(--pv-border-strong);
+}
+
+.prompt-vault-tree-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 0;
+}
+
+/* 竖条色彩指示器 */
+.prompt-vault-color-pill {
+    width: 6px;
+    height: 16px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.prompt-vault-tree-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.prompt-vault-tree-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* 数量气泡 */
+.prompt-vault-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background-color: var(--pv-bg-input);
+    color: var(--pv-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* 底栏新建根项工具行 */
+.prompt-vault-taxonomy-bottom-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--pv-border-subtle);
+    margin-top: 8px;
+}
