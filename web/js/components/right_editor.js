@@ -169,7 +169,7 @@ export class RightEditorComponent {
         promptGroup.style.flex = "1 1 0";
         promptGroup.style.display = "flex";
         promptGroup.style.flexDirection = "column";
-        promptGroup.innerHTML = `<label class="prompt-vault-editor-label">提示词 Prompt 内容 (原生文本框)</label>`;
+        promptGroup.innerHTML = `<label class="prompt-vault-editor-label">提示词</label>`;
 
         this.textarea = document.createElement("textarea");
         this.textarea.className = "prompt-vault-editor-textarea comfy-multiline-input";

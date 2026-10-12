@@ -133,7 +133,7 @@ export class LeftVaultComponent {
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
         importBtn.innerHTML = renderIcon("download", 13);
-        importBtn.title = "导入词库（带预检与冲突处理）";
+        importBtn.title = "导入词库";
         importBtn.addEventListener("click", () => {
             if (typeof this.onOpenImportModal === "function") {
                 this.onOpenImportModal();
@@ -146,7 +146,7 @@ export class LeftVaultComponent {
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
         exportBtn.innerHTML = renderIcon("upload", 13);
-        exportBtn.title = "导出全量词库（带预览统计）";
+        exportBtn.title = "导出词库";
         exportBtn.addEventListener("click", () => {
             if (typeof this.onOpenExportModal === "function") {
                 this.onOpenExportModal();
