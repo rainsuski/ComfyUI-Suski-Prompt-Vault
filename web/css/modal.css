@@ -2,8 +2,8 @@
 
 /**
  * 弹窗样式表。
- * 覆盖：词库录入弹窗（原生文件框隐蔽、统一线框上传）、
- * 磁贴删除二次确认弹窗、行内新增子分类控件及分类删除多维度统计弹窗。
+ * 建立严密的弹窗三级尺寸分级规范（compact / medium / large），
+ * 确保大型导入冲突弹窗主体全高度纵向平滑滚动、吸底底栏与全功能折叠交互面板。
  */
 
 .prompt-vault-modal-overlay {
@@ -23,12 +23,11 @@
     user-select: none;
 }
 
+/* 基础通用弹窗卡片骨架 */
 .prompt-vault-modal {
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 660px;
-    max-height: 90vh;
     background-color: #1e2026;
     border: 1px solid var(--pv-border-strong);
     border-radius: var(--pv-radius-lg);
@@ -50,6 +49,65 @@
     }
 }
 
+/* 弹窗主体内容区通用骨架规范 */
+.prompt-vault-modal-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 18px;
+    gap: 14px;
+    box-sizing: border-box;
+    user-select: text;
+}
+
+/* 1. 紧凑确认型弹窗 (删除词条、收藏选择) */
+.prompt-vault-modal.pv-modal-compact {
+    width: 440px;
+    max-width: 90vw;
+    height: auto;
+    min-height: unset;
+}
+
+.prompt-vault-modal.pv-modal-compact .prompt-vault-modal-body {
+    overflow: visible;
+    flex: unset;
+    padding: 18px 20px;
+    gap: 12px;
+}
+
+/* 2. 中型表单型弹窗 (新建词条、导出预览) */
+.prompt-vault-modal.pv-modal-medium {
+    width: 660px;
+    max-width: 90vw;
+    height: auto;
+    max-height: 88vh;
+}
+
+.prompt-vault-modal.pv-modal-medium .prompt-vault-modal-body {
+    overflow-y: auto;
+    max-height: calc(88vh - 120px);
+    padding: 16px 18px;
+    gap: 14px;
+}
+
+/* 3. 大型工作台型弹窗 (分类与收藏夹管理、导入预检) */
+.prompt-vault-modal.pv-modal-large {
+    width: 760px;
+    max-width: 94vw;
+    height: 640px;
+    max-height: 90vh;
+}
+
+.prompt-vault-modal.pv-modal-large .prompt-vault-modal-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto !important;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px;
+}
+
+/* 弹窗头部 */
 .prompt-vault-modal-header {
     display: flex;
     align-items: center;
@@ -57,6 +115,7 @@
     padding: 14px 18px;
     background-color: rgba(255, 255, 255, 0.02);
     border-bottom: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
 }
 
 .prompt-vault-modal-title {
@@ -84,20 +143,25 @@
     color: var(--pv-text-primary);
 }
 
-.prompt-vault-modal-body {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 18px;
-    overflow-y: auto;
-    box-sizing: border-box;
-    max-height: calc(90vh - 120px);
+/* 弹窗主体滚动条 */
+.prompt-vault-modal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.prompt-vault-modal-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}
+
+.prompt-vault-modal-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .prompt-vault-form-row {
     display: flex;
     gap: 14px;
     width: 100%;
+    box-sizing: border-box;
 }
 
 .prompt-vault-form-col {
@@ -105,6 +169,8 @@
     flex-direction: column;
     gap: 6px;
     flex: 1 1 0;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 .prompt-vault-form-label {
@@ -150,13 +216,15 @@
     padding: 12px 18px;
     background-color: rgba(255, 255, 255, 0.02);
     border-top: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
 }
 
-/* 缩略图上传区域样式：杜绝浏览器原生文件选择器外露 */
+/* 缩略图上传框 */
 .prompt-vault-thumb-uploader {
     display: flex;
     gap: 12px;
     align-items: stretch;
+    box-sizing: border-box;
 }
 
 .prompt-vault-thumb-preview {
@@ -181,6 +249,7 @@
 
 .prompt-vault-thumb-dropzone {
     flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -191,6 +260,7 @@
     background-color: rgba(255, 255, 255, 0.02);
     gap: 4px;
     cursor: pointer;
+    box-sizing: border-box;
     transition: all 0.15s ease;
 }
 
@@ -216,7 +286,6 @@
     font-family: var(--pv-font-mono);
 }
 
-/* 彻底隐藏原生 file input */
 .prompt-vault-hidden-file {
     display: none !important;
     opacity: 0 !important;
@@ -225,8 +294,133 @@
 }
 
 /* ========================================================
-   分类管理：行内新增子分类控件 (对齐参考图 2)
+   分类与收藏夹管理中心样式
    ======================================================== */
+
+.prompt-vault-tab-switch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px;
+    background-color: rgba(0, 0, 0, 0.45);
+    border-radius: var(--pv-radius-pill);
+    margin: 0 auto 10px auto;
+    border: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
+}
+
+.prompt-vault-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 24px;
+    border-radius: var(--pv-radius-pill);
+    border: none;
+    background: transparent;
+    color: var(--pv-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.prompt-vault-tab-btn.is-active {
+    background-color: #333842;
+    color: #ffffff;
+}
+
+.prompt-vault-taxonomy-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.prompt-vault-taxonomy-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 0;
+    min-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+    box-sizing: border-box;
+}
+
+.prompt-vault-tree-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    box-sizing: border-box;
+    transition: all 0.12s ease;
+}
+
+.prompt-vault-tree-item:hover {
+    background-color: var(--pv-bg-card-hover);
+    border-color: var(--pv-border-strong);
+}
+
+.prompt-vault-tree-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 0;
+}
+
+.prompt-vault-color-pill {
+    width: 6px;
+    height: 16px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.prompt-vault-tree-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.prompt-vault-tree-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.prompt-vault-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background-color: var(--pv-bg-input);
+    color: var(--pv-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.prompt-vault-taxonomy-bottom-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
+    margin-top: auto;
+}
 
 .prompt-vault-inline-add-row {
     display: flex;
@@ -242,6 +436,7 @@
 
 .prompt-vault-inline-add-input {
     flex: 1 1 0;
+    min-width: 0;
     height: 28px;
     background: transparent;
     border: none;
@@ -251,10 +446,7 @@
     padding: 0 4px;
 }
 
-/* ========================================================
-   分类管理：多维度统计删除弹窗 (对齐参考图 4)
-   ======================================================== */
-
+/* 多维统计删除弹窗 */
 .pv-stat-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -314,7 +506,6 @@
     line-height: 1.6;
 }
 
-/* 按钮红色危险样式 */
 .prompt-vault-btn-danger-solid {
     background-color: #ef4444;
     color: #ffffff;
@@ -323,4 +514,339 @@
 
 .prompt-vault-btn-danger-solid:hover {
     background-color: #dc2626;
+}
+
+/* ========================================================
+   导入预检与冲突处理面板专属样式
+   ======================================================== */
+
+.pv-import-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-radius: var(--pv-radius-md);
+    background-color: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.pv-import-banner.is-ok {
+    background-color: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.25);
+}
+
+.pv-import-banner-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.pv-import-banner-icon {
+    font-size: 20px;
+    color: #ef4444;
+}
+
+.pv-import-banner.is-ok .pv-import-banner-icon {
+    color: #10b981;
+}
+
+.pv-import-banner-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f3f4f6;
+}
+
+.pv-import-banner-desc {
+    font-size: 11px;
+    color: var(--pv-text-secondary);
+    margin-top: 2px;
+}
+
+.pv-import-banner-right {
+    text-align: right;
+    font-size: 11px;
+    color: var(--pv-text-muted);
+}
+
+.pv-import-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.pv-import-stat-card {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    box-sizing: border-box;
+}
+
+.pv-import-stat-num {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.pv-import-stat-label {
+    font-size: 11px;
+    color: var(--pv-text-secondary);
+    margin-top: 4px;
+}
+
+.pv-stat-new {
+    color: #10b981;
+}
+
+.pv-stat-exist {
+    color: #3b82f6;
+}
+
+.pv-stat-conflict {
+    color: #f59e0b;
+}
+
+.pv-stat-dup {
+    color: #eab308;
+}
+
+.pv-stat-invalid {
+    color: #ef4444;
+}
+
+/* 折叠卡片 */
+.pv-accordion-section {
+    display: flex;
+    flex-direction: column;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.pv-accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background-color: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    user-select: none;
+}
+
+.pv-accordion-header:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.pv-accordion-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pv-accordion-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+}
+
+.pv-accordion-subtitle {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+}
+
+/* 旋转展开图标 */
+.pv-acc-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--pv-text-muted);
+    transition: transform 0.18s ease;
+}
+
+.pv-accordion-section.is-open .pv-acc-chevron {
+    transform: rotate(180deg);
+}
+
+.pv-accordion-body {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--pv-border-subtle);
+    background-color: rgba(0, 0, 0, 0.15);
+}
+
+.pv-accordion-section.is-open .pv-accordion-body {
+    display: flex;
+}
+
+/* 冲突单项行 */
+.pv-conflict-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-sm);
+}
+
+.pv-conflict-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.pv-conflict-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+}
+
+.pv-conflict-reason {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+}
+
+.pv-conflict-select {
+    width: 120px;
+    height: 28px;
+    background-color: var(--pv-bg-surface);
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-sm);
+    color: var(--pv-text-primary);
+    font-size: 11px;
+    padding: 0 6px;
+    outline: none;
+}
+
+/* 通用列表行（用于已有词条、无效词条展示） */
+.pv-entry-item-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-sm);
+    font-size: 12px;
+}
+
+.pv-entry-item-title {
+    font-weight: 600;
+    color: var(--pv-text-primary);
+}
+
+.pv-entry-item-desc {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    font-family: var(--pv-font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 320px;
+}
+
+/* ========================================================
+   导出预览中心专属样式
+   ======================================================== */
+
+.pv-export-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 20px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-md);
+    box-sizing: border-box;
+}
+
+.pv-export-card-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.pv-export-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--pv-radius-pill);
+    font-size: 11px;
+    font-weight: 600;
+    background-color: rgba(168, 85, 247, 0.18);
+    color: #c084fc;
+    margin-bottom: 4px;
+}
+
+.pv-export-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--pv-text-primary);
+}
+
+.pv-export-subtitle {
+    font-size: 12px;
+    color: var(--pv-text-muted);
+    margin-top: 4px;
+}
+
+.pv-export-card-right {
+    text-align: right;
+}
+
+.pv-export-filename {
+    font-size: 13px;
+    font-weight: 600;
+    color: #c084fc;
+    font-family: var(--pv-font-mono);
+}
+
+.pv-export-format {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    margin-top: 4px;
+}
+
+.pv-export-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    width: 100%;
+}
+
+.pv-export-stat-box {
+    display: flex;
+    flex-direction: column;
+    padding: 14px 16px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+}
+
+.pv-export-stat-num {
+    font-size: 22px;
+    font-weight: 700;
+    color: #60a5fa;
+    line-height: 1.2;
+}
+
+.pv-export-stat-label {
+    font-size: 12px;
+    color: var(--pv-text-secondary);
+    margin-top: 6px;
 }

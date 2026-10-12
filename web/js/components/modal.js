@@ -2,25 +2,27 @@
 
 /**
  * 全量弹窗模块管理器。
- * 包含：
- * 1. PresetModalManager: 词条录入/编辑弹窗（保存成功直接传递服务端返回的最新预设实体）；
- * 2. TileDeleteConfirmModal: 词条删除专属二次确认弹窗；
- * 3. FavoriteModalManager: 词条轻量收藏联动弹窗；
- * 4. TaxonomyModalManager: 分类与收藏夹多级管理中心。
+ * 显式绑定三级弹窗尺寸 Class (pv-modal-compact / pv-modal-medium / pv-modal-large)，
+ * 支持导入差异预检与冲突处理（完全折叠展开、滚动顺畅）、
+ * 导出预览统计卡片以及紧凑型无滚动条删除弹窗。
  */
 
 import {
-    deletePreset,
-    deleteTaxonomyItem,
+    deleteCategory,
+    deleteCollection,
+    deleteEntry,
     getThumbnailUrl,
-    upsertPreset,
-    upsertTaxonomyItem,
+    importLibrary,
+    triggerExportLibrary,
+    upsertCategory,
+    upsertCollection,
+    upsertEntry,
 } from "../api.js";
 import { isolateCanvasEvents } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 
 function buildCategoryHierarchyOptions(categories) {
-    const result = [{ name: "未分类", label: "未分类" }];
+    const result = [{ id: "", name: "未分类", label: "未分类" }];
     const map = new Map();
     const roots = [];
 
@@ -29,8 +31,8 @@ function buildCategoryHierarchyOptions(categories) {
     });
 
     categories.forEach((c) => {
-        if (c.parent_id && map.has(c.parent_id)) {
-            map.get(c.parent_id).children.push(map.get(c.id));
+        if (c.parentId && map.has(c.parentId)) {
+            map.get(c.parentId).children.push(map.get(c.id));
         } else {
             roots.push(map.get(c.id));
         }
@@ -39,6 +41,7 @@ function buildCategoryHierarchyOptions(categories) {
     function traverse(node, depth) {
         const prefix = depth === 0 ? "" : `${"  ".repeat(depth)}└─ `;
         result.push({
+            id: node.id,
             name: node.name,
             label: `${prefix}${node.name}`,
         });
@@ -51,13 +54,17 @@ function buildCategoryHierarchyOptions(categories) {
     return result;
 }
 
+/* =========================================================================
+   1. 词条录入与编辑弹窗管理器
+   ========================================================================= */
+
 export class PresetModalManager {
     /**
-     * @param {() => { categories: any[], folders: any[] }} getTaxonomiesCallback
+     * @param {() => { categories: any[], collections: any[], tags: any[] }} getLibraryCallback
      * @param {(savedData?: any) => Promise<void>} onSavedCallback
      */
-    constructor(getTaxonomiesCallback, onSavedCallback) {
-        this.getTaxonomies = getTaxonomiesCallback;
+    constructor(getLibraryCallback, onSavedCallback) {
+        this.getLibrary = getLibraryCallback;
         this.onSaved = onSavedCallback;
         this.pendingImageFile = null;
         this.targetData = null;
@@ -74,11 +81,13 @@ export class PresetModalManager {
         isolateCanvasEvents(this.overlay);
 
         const isEditMode = Boolean(initialData && initialData.id);
-        const { categories, folders } = this.getTaxonomies();
+        const lib = this.getLibrary();
+        const categories = lib.categories || [];
+        const collections = lib.collections || [];
         const categoryOptions = buildCategoryHierarchyOptions(categories);
 
         this.overlay.innerHTML = `
-      <div class="prompt-vault-modal">
+      <div class="prompt-vault-modal pv-modal-medium">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">${isEditMode ? "编辑预设条目" : "新建预设条目"}</div>
           <button type="button" class="prompt-vault-modal-close" title="关闭">${renderIcon("x", 16)}</button>
@@ -92,7 +101,7 @@ export class PresetModalManager {
             <div class="prompt-vault-form-col">
               <label class="prompt-vault-form-label">所属分类</label>
               <select class="prompt-vault-form-select" id="pv-form-category">
-                ${categoryOptions.map((opt) => `<option value="${opt.name}">${opt.label}</option>`).join("")}
+                ${categoryOptions.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -111,7 +120,7 @@ export class PresetModalManager {
               <label class="prompt-vault-form-label">加入收藏夹</label>
               <select class="prompt-vault-form-select" id="pv-form-folder">
                 <option value="">不加入收藏 (默认)</option>
-                ${folders.map((f) => `<option value="${f.name}">${f.name}</option>`).join("")}
+                ${collections.map((c) => `<option value="${c.name}">${c.name}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -161,13 +170,39 @@ export class PresetModalManager {
 
         if (data) {
             if (titleInput) titleInput.value = data.title || "";
-            if (categorySelect && data.category) categorySelect.value = data.category;
-            if (promptInput) promptInput.value = data.prompt || "";
-            if (tagsInput) tagsInput.value = Array.isArray(data.tags) ? data.tags.join(", ") : "";
-            if (folderSelect) folderSelect.value = data.favorite && data.folder ? data.folder : "";
+            if (categorySelect) categorySelect.value = data.categoryId || data.category_id || "";
+            if (promptInput) promptInput.value = data.text || data.prompt || "";
             if (noteInput) noteInput.value = data.note || "";
-            if (data.thumbnail && previewBox) {
-                previewBox.innerHTML = `<img src="${getThumbnailUrl(data.thumbnail)}" alt="thumb" />`;
+
+            const lib = this.getLibrary();
+            const tagsDict = lib.tags || [];
+            const tagNames = [];
+            if (Array.isArray(data.tagIds)) {
+                data.tagIds.forEach((tid) => {
+                    const tObj = tagsDict.find((t) => t.id === tid);
+                    if (tObj) tagNames.push(tObj.name);
+                });
+            }
+            if (Array.isArray(data.tags)) {
+                data.tags.forEach((t) => {
+                    if (typeof t === "string" && !tagNames.includes(t)) tagNames.push(t);
+                });
+            }
+            if (tagsInput) tagsInput.value = tagNames.join(", ");
+
+            if (folderSelect) {
+                if (Array.isArray(data.collections) && data.collections.length > 0) {
+                    folderSelect.value = data.collections[0];
+                } else if (data.folder) {
+                    folderSelect.value = data.folder;
+                } else {
+                    folderSelect.value = "";
+                }
+            }
+
+            const thumb = data.previewHash || data.thumbnail;
+            if (thumb && previewBox) {
+                previewBox.innerHTML = `<img src="${getThumbnailUrl(thumb)}" alt="thumb" />`;
             }
         } else {
             if (folderSelect) folderSelect.value = "";
@@ -243,7 +278,7 @@ export class PresetModalManager {
     async submitForm() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
-        const category = (this.overlay.querySelector("#pv-form-category")?.value || "").trim() || "未分类";
+        const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
         const note = (this.overlay.querySelector("#pv-form-note")?.value || "").trim();
@@ -258,16 +293,16 @@ export class PresetModalManager {
         }
 
         const tags = tagsRaw.split(/[,，]+/).map((t) => t.trim()).filter(Boolean);
+
         const payload = {
             id: this.targetData && this.targetData.id ? this.targetData.id : undefined,
             title,
-            prompt,
-            category,
-            tags,
-            folder: folder || "",
-            favorite: Boolean(folder),
+            text: prompt,
+            categoryId: categoryId || null,
+            tags: tags,
+            collections: folder ? [folder] : [],
             note,
-            thumbnail: this.targetData ? this.targetData.thumbnail || "" : "",
+            previewHash: this.targetData ? this.targetData.previewHash || this.targetData.thumbnail || null : null,
         };
 
         const saveBtn = this.overlay.querySelector("#pv-modal-save");
@@ -276,15 +311,14 @@ export class PresetModalManager {
             saveBtn.textContent = "保存中...";
         }
 
-        const result = await upsertPreset(payload, this.pendingImageFile);
-        if (result.success) {
-            // 直接将服务端返回的有效实体数据传入回调函数，杜绝客户端模糊比对失效
+        const result = await upsertEntry(payload, this.pendingImageFile);
+        if (result && result.success) {
             if (typeof this.onSaved === "function") {
                 await this.onSaved(result.data);
             }
             this.close();
         } else {
-            alert(`保存失败: ${result.error || "未知异常"}`);
+            alert(`保存失败: ${result?.error || "服务未响应，请检查 ComfyUI 是否已重启"}`);
             if (saveBtn) {
                 saveBtn.disabled = false;
                 saveBtn.textContent = "保存";
@@ -303,6 +337,10 @@ export class PresetModalManager {
     }
 }
 
+/* =========================================================================
+   2. 词条删除二次确认紧凑型弹窗 (紧凑型，自适应无滚动条)
+   ========================================================================= */
+
 export class TileDeleteConfirmModal {
     /**
      * @param {() => Promise<void>} onDeletedCallback
@@ -312,21 +350,21 @@ export class TileDeleteConfirmModal {
         this.overlay = null;
     }
 
-    open(preset) {
+    open(entry) {
         this.close();
         this.overlay = document.createElement("div");
         this.overlay.className = "prompt-vault-modal-overlay";
         isolateCanvasEvents(this.overlay);
 
         this.overlay.innerHTML = `
-      <div class="prompt-vault-modal" style="max-width: 420px;">
+      <div class="prompt-vault-modal pv-modal-compact">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">删除提示词</div>
           <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
         </div>
-        <div class="prompt-vault-modal-body" style="gap: 12px;">
-          <div style="font-size: 13px; color: var(--pv-text-primary);">
-            确定要删除词条 <strong>[${preset.title || "未命名"}]</strong> 吗？
+        <div class="prompt-vault-modal-body">
+          <div style="font-size: 13px; color: var(--pv-text-primary); line-height: 1.5;">
+            确定要删除词条 <strong>[${entry.title || "未命名"}]</strong> 吗？
           </div>
           <div class="pv-info-callout" style="color: var(--pv-accent-danger);">
             此操作不可逆，将永久移除本地预设库中的该条目及其关联缩略图。
@@ -357,12 +395,12 @@ export class TileDeleteConfirmModal {
         confirmBtn.addEventListener("click", async () => {
             confirmBtn.disabled = true;
             confirmBtn.textContent = "删除中...";
-            const success = await deletePreset(preset.id);
+            const success = await deleteEntry(entry.id);
             if (success) {
                 if (typeof this.onDeleted === "function") await this.onDeleted();
                 this.close();
             } else {
-                alert("删除失败，请查看服务端日志。");
+                alert("删除失败，请检查服务状态。");
                 confirmBtn.disabled = false;
                 confirmBtn.textContent = "删除";
             }
@@ -377,48 +415,52 @@ export class TileDeleteConfirmModal {
     }
 }
 
+/* =========================================================================
+   3. 收藏夹联动弹窗管理器 (紧凑型)
+   ========================================================================= */
+
 export class FavoriteModalManager {
     /**
-     * @param {() => any[]} getFoldersCallback
+     * @param {() => any[]} getCollectionsCallback
      * @param {() => Promise<void>} onUpdatedCallback
      */
-    constructor(getFoldersCallback, onUpdatedCallback) {
-        this.getFolders = getFoldersCallback;
+    constructor(getCollectionsCallback, onUpdatedCallback) {
+        this.getCollections = getCollectionsCallback;
         this.onUpdated = onUpdatedCallback;
         this.overlay = null;
     }
 
-    async handleToggleFavorite(preset) {
-        if (preset.favorite) {
-            preset.favorite = false;
-            preset.folder = "";
-            await upsertPreset(preset);
+    async handleToggleFavorite(entry) {
+        const isFavorited = Array.isArray(entry.collections) && entry.collections.length > 0;
+        if (isFavorited) {
+            entry.collections = [];
+            await upsertEntry(entry);
             if (typeof this.onUpdated === "function") await this.onUpdated();
             return;
         }
-        this.openModal(preset);
+        this.openModal(entry);
     }
 
-    openModal(preset) {
+    openModal(entry) {
         this.close();
-        const folders = this.getFolders();
+        const collections = this.getCollections();
 
         this.overlay = document.createElement("div");
         this.overlay.className = "prompt-vault-modal-overlay";
         isolateCanvasEvents(this.overlay);
 
         this.overlay.innerHTML = `
-      <div class="prompt-vault-modal" style="max-width: 440px;">
+      <div class="prompt-vault-modal pv-modal-compact">
         <div class="prompt-vault-modal-header">
-          <div class="prompt-vault-modal-title">收藏词条 · ${preset.title || "未命名"}</div>
+          <div class="prompt-vault-modal-title">收藏词条 · ${entry.title || "未命名"}</div>
           <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
         </div>
-        <div class="prompt-vault-modal-body" style="gap: 12px;">
+        <div class="prompt-vault-modal-body">
           <div style="font-size: 13px; color: var(--pv-text-secondary);">选择要加入的收藏夹。</div>
           <div class="prompt-vault-form-col">
             <label class="prompt-vault-form-label">收藏夹</label>
             <select class="prompt-vault-form-select" id="pv-fav-select">
-              ${folders.map((f) => `<option value="${f.name}">${f.name}</option>`).join("")}
+              ${collections.map((c) => `<option value="${c.name}">${c.name}</option>`).join("")}
               <option value="__NEW__">+ 新建收藏夹...</option>
             </select>
           </div>
@@ -457,19 +499,18 @@ export class FavoriteModalManager {
         });
 
         submitBtn.addEventListener("click", async () => {
-            let chosenFolder = select.value;
-            if (chosenFolder === "__NEW__") {
-                chosenFolder = (newNameInput.value || "").trim();
-                if (!chosenFolder) {
+            let chosenCollection = select.value;
+            if (chosenCollection === "__NEW__") {
+                chosenCollection = (newNameInput.value || "").trim();
+                if (!chosenCollection) {
                     alert("请输入新收藏夹名称！");
                     return;
                 }
-                await upsertTaxonomyItem("folder", { name: chosenFolder });
+                await upsertCollection({ name: chosenCollection });
             }
 
-            preset.favorite = true;
-            preset.folder = chosenFolder;
-            await upsertPreset(preset);
+            entry.collections = [chosenCollection];
+            await upsertEntry(entry);
             if (typeof this.onUpdated === "function") await this.onUpdated();
             this.close();
         });
@@ -483,15 +524,17 @@ export class FavoriteModalManager {
     }
 }
 
+/* =========================================================================
+   4. 分类与收藏夹多级管理中心 (大型工作台型)
+   ========================================================================= */
+
 export class TaxonomyModalManager {
     /**
-     * @param {() => { categories: any[], folders: any[] }} getTaxonomiesCallback
-     * @param {() => any[]} getPresetsCallback
+     * @param {() => { categories: any[], collections: any[], entries: any[] }} getLibraryCallback
      * @param {() => Promise<void>} onUpdatedCallback
      */
-    constructor(getTaxonomiesCallback, getPresetsCallback, onUpdatedCallback) {
-        this.getTaxonomies = getTaxonomiesCallback;
-        this.getPresets = getPresetsCallback;
+    constructor(getLibraryCallback, onUpdatedCallback) {
+        this.getLibrary = getLibraryCallback;
         this.onUpdated = onUpdatedCallback;
         this.activeTab = "categories";
         this.searchKeyword = "";
@@ -508,7 +551,7 @@ export class TaxonomyModalManager {
         isolateCanvasEvents(this.overlay);
 
         this.overlay.innerHTML = `
-      <div class="prompt-vault-modal" style="max-width: 680px;">
+      <div class="prompt-vault-modal pv-modal-large">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">分类与收藏夹管理</div>
           <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
@@ -524,8 +567,8 @@ export class TaxonomyModalManager {
           </div>
 
           <div class="prompt-vault-taxonomy-toolbar">
-            <input type="text" class="prompt-vault-input" id="pv-tax-search" placeholder="搜索分类..." style="flex: 1 1 0;" />
-            <div style="display: flex; gap: 8px;">
+            <input type="text" class="prompt-vault-input" id="pv-tax-search" placeholder="搜索分类..." style="flex: 1 1 0; min-width: 0;" />
+            <div style="display: flex; gap: 8px; flex-shrink: 0;">
               <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-tax-expand-all" style="height: 26px; font-size: 11px;">全部展开</button>
               <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-tax-collapse-all" style="height: 26px; font-size: 11px;">全部折叠</button>
             </div>
@@ -534,7 +577,7 @@ export class TaxonomyModalManager {
           <div class="prompt-vault-taxonomy-list" id="pv-tax-list"></div>
 
           <div class="prompt-vault-taxonomy-bottom-row">
-            <input type="text" class="prompt-vault-input" id="pv-tax-new-root" placeholder="新建根分类..." style="flex: 1 1 0;" />
+            <input type="text" class="prompt-vault-input" id="pv-tax-new-root" placeholder="新建根分类..." style="flex: 1 1 0; min-width: 0;" />
             <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-tax-add-root">
               ${renderIcon("plus", 12)} <span>添加</span>
             </button>
@@ -546,7 +589,7 @@ export class TaxonomyModalManager {
 
         document.body.appendChild(this.overlay);
         this.bindEvents();
-        this.renderTree();
+        this.renderContent();
     }
 
     bindEvents() {
@@ -574,66 +617,96 @@ export class TaxonomyModalManager {
             tabFld.classList.remove("is-active");
             searchInput.placeholder = "搜索分类...";
             newRootInput.placeholder = "新建根分类...";
-            this.renderTree();
+            this.renderContent();
         });
 
         tabFld.addEventListener("click", () => {
-            this.activeTab = "folders";
+            this.activeTab = "collections";
             this.inlineAddParentId = null;
             tabFld.classList.add("is-active");
             tabCat.classList.remove("is-active");
             searchInput.placeholder = "搜索收藏夹...";
-            newRootInput.placeholder = "新建根收藏夹...";
-            this.renderTree();
+            newRootInput.placeholder = "新建收藏夹...";
+            this.renderContent();
         });
 
         searchInput.addEventListener("input", () => {
             this.searchKeyword = searchInput.value.trim().toLowerCase();
-            this.renderTree();
+            this.renderContent();
         });
 
         expandAllBtn.addEventListener("click", () => {
-            const items = this.getTaxonomies()[this.activeTab];
-            items.forEach((it) => this.expandedNodeIds.add(it.id));
-            this.renderTree();
+            const { categories } = this.getLibrary();
+            (categories || []).forEach((it) => this.expandedNodeIds.add(it.id));
+            this.renderContent();
         });
 
         collapseAllBtn.addEventListener("click", () => {
             this.expandedNodeIds.clear();
-            this.renderTree();
+            this.renderContent();
         });
 
         addRootBtn.addEventListener("click", async () => {
             const name = (newRootInput.value || "").trim();
             if (!name) return;
-            const type = this.activeTab === "categories" ? "category" : "folder";
-            await upsertTaxonomyItem(type, {
-                name,
-                parent_id: null,
-                color: type === "category" ? "#3b82f6" : undefined,
-            });
-            newRootInput.value = "";
-            if (typeof this.onUpdated === "function") await this.onUpdated();
-            this.renderTree();
+            let res;
+            if (this.activeTab === "categories") {
+                res = await upsertCategory({
+                    name,
+                    parentId: null,
+                    color: "#3b82f6",
+                });
+            } else {
+                res = await upsertCollection({
+                    name,
+                });
+            }
+            if (res && res.success) {
+                newRootInput.value = "";
+                if (typeof this.onUpdated === "function") await this.onUpdated();
+                this.renderContent();
+            } else {
+                alert(`添加失败: ${res?.error || "服务未响应，请检查 ComfyUI 是否已重启"}`);
+            }
         });
     }
 
-    renderTree() {
+    renderContent() {
         const listContainer = this.overlay.querySelector("#pv-tax-list");
         listContainer.innerHTML = "";
 
-        const { categories, folders } = this.getTaxonomies();
-        const items = this.activeTab === "categories" ? categories : folders;
-        const isCategory = this.activeTab === "categories";
+        const lib = this.getLibrary();
+        const categories = lib.categories || [];
+        const collections = lib.collections || [];
+        const entries = lib.entries || [];
+
+        if (this.activeTab === "categories") {
+            this.renderCategoriesTree(listContainer, categories, entries);
+        } else {
+            this.renderCollectionsList(listContainer, collections, entries);
+        }
+    }
+
+    renderCategoriesTree(listContainer, categories, entries) {
+        if (!categories || categories.length === 0) {
+            listContainer.innerHTML = `
+        <div class="prompt-vault-empty-state" style="height: 100%; min-height: 220px;">
+          <div class="prompt-vault-empty-icon">${renderIcon("folder", 28)}</div>
+          <div>暂无分类</div>
+          <div style="font-size:11px; opacity:0.7;">请在下方输入名称并点击 [+ 添加] 创建根分类</div>
+        </div>
+      `;
+            return;
+        }
 
         const map = new Map();
         const roots = [];
-        items.forEach((it) => map.set(it.id, { ...it, children: [] }));
-        items.forEach((it) => {
-            if (it.parent_id && map.has(it.parent_id)) {
-                map.get(it.parent_id).children.push(map.get(it.id));
+        categories.forEach((c) => map.set(c.id, { ...c, children: [] }));
+        categories.forEach((c) => {
+            if (c.parentId && map.has(c.parentId)) {
+                map.get(c.parentId).children.push(map.get(c.id));
             } else {
-                roots.push(map.get(it.id));
+                roots.push(map.get(c.id));
             }
         });
 
@@ -665,16 +738,14 @@ export class TaxonomyModalManager {
                 } else {
                     this.expandedNodeIds.add(node.id);
                 }
-                this.renderTree();
+                this.renderContent();
             });
             leftBox.appendChild(expandIcon);
 
-            if (isCategory) {
-                const colorPill = document.createElement("div");
-                colorPill.className = "prompt-vault-color-pill";
-                colorPill.style.backgroundColor = node.color || "#3b82f6";
-                leftBox.appendChild(colorPill);
-            }
+            const colorPill = document.createElement("div");
+            colorPill.className = "prompt-vault-color-pill";
+            colorPill.style.backgroundColor = node.color || "#3b82f6";
+            leftBox.appendChild(colorPill);
 
             const nameLabel = document.createElement("span");
             nameLabel.className = "prompt-vault-tree-name";
@@ -685,9 +756,10 @@ export class TaxonomyModalManager {
             const rightBox = document.createElement("div");
             rightBox.className = "prompt-vault-tree-right";
 
+            const count = entries.filter((e) => e.categoryId === node.id).length;
             const countBadge = document.createElement("span");
             countBadge.className = "prompt-vault-count-badge";
-            countBadge.textContent = node.count || 0;
+            countBadge.textContent = count;
             rightBox.appendChild(countBadge);
 
             const addChildBtn = document.createElement("button");
@@ -698,17 +770,17 @@ export class TaxonomyModalManager {
             addChildBtn.addEventListener("click", () => {
                 this.inlineAddParentId = node.id;
                 this.expandedNodeIds.add(node.id);
-                this.renderTree();
+                this.renderContent();
             });
             rightBox.appendChild(addChildBtn);
 
             const editBtn = document.createElement("button");
             editBtn.type = "button";
             editBtn.className = "prompt-vault-tile-btn";
-            editBtn.title = isCategory ? "修改名称与颜色" : "重命名";
+            editBtn.title = "修改名称与颜色";
             editBtn.innerHTML = renderIcon("settings", 12);
             editBtn.addEventListener("click", () => {
-                this.openEditNodeDialog(node, isCategory);
+                this.openEditCategoryDialog(node);
             });
             rightBox.appendChild(editBtn);
 
@@ -718,7 +790,7 @@ export class TaxonomyModalManager {
             deleteBtn.title = "删除";
             deleteBtn.innerHTML = renderIcon("trash", 12);
             deleteBtn.addEventListener("click", () => {
-                this.openDeleteCategoryModal(node, isCategory);
+                this.openDeleteCategoryModal(node, categories, entries);
             });
             rightBox.appendChild(deleteBtn);
 
@@ -754,15 +826,18 @@ export class TaxonomyModalManager {
                 const doSaveChild = async () => {
                     const childName = inlineInput.value.trim();
                     if (!childName) return;
-                    const type = isCategory ? "category" : "folder";
-                    await upsertTaxonomyItem(type, {
+                    const res = await upsertCategory({
                         name: childName,
-                        parent_id: node.id,
+                        parentId: node.id,
                         color: node.color || "#3b82f6",
                     });
-                    this.inlineAddParentId = null;
-                    if (typeof this.onUpdated === "function") await this.onUpdated();
-                    this.renderTree();
+                    if (res && res.success) {
+                        this.inlineAddParentId = null;
+                        if (typeof this.onUpdated === "function") await this.onUpdated();
+                        this.renderContent();
+                    } else {
+                        alert(`添加子分类失败: ${res?.error || "服务未响应"}`);
+                    }
                 };
 
                 inlineSaveBtn.addEventListener("click", doSaveChild);
@@ -770,13 +845,13 @@ export class TaxonomyModalManager {
                     if (e.key === "Enter") doSaveChild();
                     if (e.key === "Escape") {
                         this.inlineAddParentId = null;
-                        this.renderTree();
+                        this.renderContent();
                     }
                 });
 
                 inlineCancelBtn.addEventListener("click", () => {
                     this.inlineAddParentId = null;
-                    this.renderTree();
+                    this.renderContent();
                 });
 
                 inlineRow.appendChild(inlineInput);
@@ -795,16 +870,114 @@ export class TaxonomyModalManager {
         roots.forEach((root) => renderNode(root, 0));
     }
 
-    openDeleteCategoryModal(node, isCategory) {
-        const { categories, folders } = this.getTaxonomies();
-        const items = isCategory ? categories : folders;
-        const presets = typeof this.getPresets === "function" ? this.getPresets() : [];
+    renderCollectionsList(listContainer, collections, entries) {
+        if (!collections || collections.length === 0) {
+            listContainer.innerHTML = `
+        <div class="prompt-vault-empty-state" style="height: 100%; min-height: 220px;">
+          <div class="prompt-vault-empty-icon">${renderIcon("star", 28)}</div>
+          <div>暂无收藏夹</div>
+          <div style="font-size:11px; opacity:0.7;">请在下方输入名称并点击 [+ 添加] 创建收藏夹</div>
+        </div>
+      `;
+            return;
+        }
 
+        collections.forEach((col) => {
+            if (this.searchKeyword && !col.name.toLowerCase().includes(this.searchKeyword)) {
+                return;
+            }
+
+            const itemRow = document.createElement("div");
+            itemRow.className = "prompt-vault-tree-item";
+
+            const leftBox = document.createElement("div");
+            leftBox.className = "prompt-vault-tree-left";
+
+            const iconSpan = document.createElement("span");
+            iconSpan.innerHTML = renderIcon("star", 13);
+            leftBox.appendChild(iconSpan);
+
+            const nameLabel = document.createElement("span");
+            nameLabel.className = "prompt-vault-tree-name";
+            nameLabel.textContent = col.name;
+            leftBox.appendChild(nameLabel);
+            itemRow.appendChild(leftBox);
+
+            const rightBox = document.createElement("div");
+            rightBox.className = "prompt-vault-tree-right";
+
+            const count = entries.filter(
+                (e) => Array.isArray(e.collections) && e.collections.includes(col.name)
+            ).length;
+            const countBadge = document.createElement("span");
+            countBadge.className = "prompt-vault-count-badge";
+            countBadge.textContent = count;
+            rightBox.appendChild(countBadge);
+
+            const editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "prompt-vault-tile-btn";
+            editBtn.title = "重命名";
+            editBtn.innerHTML = renderIcon("settings", 12);
+            editBtn.addEventListener("click", async () => {
+                const newName = prompt("重命名收藏夹:", col.name);
+                if (!newName || newName.trim() === col.name) return;
+                await upsertCollection({ id: col.id, name: newName.trim() });
+                if (typeof this.onUpdated === "function") await this.onUpdated();
+                this.renderContent();
+            });
+            rightBox.appendChild(editBtn);
+
+            const deleteBtn = document.createElement("button");
+            deleteBtn.type = "button";
+            deleteBtn.className = "prompt-vault-tile-btn";
+            deleteBtn.title = "删除";
+            deleteBtn.innerHTML = renderIcon("trash", 12);
+            deleteBtn.addEventListener("click", async () => {
+                if (!confirm(`确定要删除收藏夹 [${col.name}] 吗？`)) return;
+                await deleteCollection(col.id);
+                if (typeof this.onUpdated === "function") await this.onUpdated();
+                this.renderContent();
+            });
+            rightBox.appendChild(deleteBtn);
+
+            itemRow.appendChild(rightBox);
+            listContainer.appendChild(itemRow);
+        });
+    }
+
+    openEditCategoryDialog(node) {
+        const newName = prompt("修改分类名称:", node.name);
+        if (newName === null) return;
+        const finalName = newName.trim() || node.name;
+
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = node.color || "#3b82f6";
+        colorInput.style.position = "fixed";
+        colorInput.style.opacity = "0";
+        document.body.appendChild(colorInput);
+
+        colorInput.addEventListener("change", async () => {
+            await upsertCategory({
+                id: node.id,
+                name: finalName,
+                parentId: node.parentId,
+                color: colorInput.value,
+            });
+            document.body.removeChild(colorInput);
+            if (typeof this.onUpdated === "function") await this.onUpdated();
+            this.renderContent();
+        });
+        colorInput.click();
+    }
+
+    openDeleteCategoryModal(node, categories, entries) {
         const getPath = (n) => {
             const parts = [n.name];
             let cur = n;
-            while (cur.parent_id) {
-                const parent = items.find((p) => p.id === cur.parent_id);
+            while (cur.parentId) {
+                const parent = categories.find((p) => p.id === cur.parentId);
                 if (parent) {
                     parts.unshift(parent.name);
                     cur = parent;
@@ -818,8 +991,8 @@ export class TaxonomyModalManager {
 
         const descendantNodes = [];
         const collectDescendants = (pid) => {
-            items.forEach((it) => {
-                if (it.parent_id === pid) {
+            categories.forEach((it) => {
+                if (it.parentId === pid) {
                     descendantNodes.push(it);
                     collectDescendants(it.id);
                 }
@@ -827,11 +1000,11 @@ export class TaxonomyModalManager {
         };
         collectDescendants(node.id);
 
-        const directPresetsCount = presets.filter((p) => p.category === node.name).length;
-        const directChildrenCount = items.filter((it) => it.parent_id === node.id).length;
+        const directPresetsCount = entries.filter((e) => e.categoryId === node.id).length;
+        const directChildrenCount = categories.filter((c) => c.parentId === node.id).length;
         const branchChildrenCount = descendantNodes.length;
-        const descendantNames = new Set(descendantNodes.map((d) => d.name));
-        const branchPresetsCount = presets.filter((p) => descendantNames.has(p.category)).length;
+        const descendantIds = new Set(descendantNodes.map((d) => d.id));
+        const branchPresetsCount = entries.filter((e) => descendantIds.has(e.categoryId)).length;
 
         const confirmOverlay = document.createElement("div");
         confirmOverlay.className = "prompt-vault-modal-overlay";
@@ -839,12 +1012,12 @@ export class TaxonomyModalManager {
         isolateCanvasEvents(confirmOverlay);
 
         confirmOverlay.innerHTML = `
-      <div class="prompt-vault-modal" style="max-width: 480px;">
+      <div class="prompt-vault-modal pv-modal-compact" style="max-width: 480px;">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">删除分类 · ${fullPath}</div>
           <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
         </div>
-        <div class="prompt-vault-modal-body" style="gap: 12px;">
+        <div class="prompt-vault-modal-body">
           <div class="pv-stat-grid">
             <div class="pv-stat-card">
               <span class="pv-stat-number">${directPresetsCount}</span>
@@ -905,52 +1078,11 @@ export class TaxonomyModalManager {
             confirmBtn.disabled = true;
             confirmBtn.textContent = "删除中...";
             const deleteBranch = branchChk.checked;
-            const type = isCategory ? "category" : "folder";
-
-            await deleteTaxonomyItem(type, node.id, deleteBranch);
+            await deleteCategory(node.id, deleteBranch);
             doClose();
             if (typeof this.onUpdated === "function") await this.onUpdated();
-            this.renderTree();
+            this.renderContent();
         });
-    }
-
-    openEditNodeDialog(node, isCategory) {
-        const newName = prompt("修改名称:", node.name);
-        if (newName === null) return;
-        const finalName = newName.trim() || node.name;
-
-        if (isCategory) {
-            const colorInput = document.createElement("input");
-            colorInput.type = "color";
-            colorInput.value = node.color || "#3b82f6";
-            colorInput.style.position = "fixed";
-            colorInput.style.opacity = "0";
-            document.body.appendChild(colorInput);
-
-            colorInput.addEventListener("change", async () => {
-                const type = "category";
-                await upsertTaxonomyItem(type, {
-                    id: node.id,
-                    name: finalName,
-                    parent_id: node.parent_id,
-                    color: colorInput.value,
-                });
-                document.body.removeChild(colorInput);
-                if (typeof this.onUpdated === "function") await this.onUpdated();
-                this.renderTree();
-            });
-            colorInput.click();
-        } else {
-            (async () => {
-                await upsertTaxonomyItem("folder", {
-                    id: node.id,
-                    name: finalName,
-                    parent_id: node.parent_id,
-                });
-                if (typeof this.onUpdated === "function") await this.onUpdated();
-                this.renderTree();
-            })();
-        }
     }
 
     close() {
@@ -959,5 +1091,548 @@ export class TaxonomyModalManager {
         }
         this.overlay = null;
         this.inlineAddParentId = null;
+    }
+}
+
+/* =========================================================================
+   5. 导入词库差异预检与冲突处理中心 (大型工作台型，主体支持自由滚动与全项折叠展开)
+   ========================================================================= */
+
+export class ImportModalManager {
+    /**
+     * @param {() => any} getLibraryCallback
+     * @param {() => Promise<void>} onUpdatedCallback
+     */
+    constructor(getLibraryCallback, onUpdatedCallback) {
+        this.getLibrary = getLibraryCallback;
+        this.onUpdated = onUpdatedCallback;
+        this.overlay = null;
+    }
+
+    open(importedData, fileName = "manifest.json", fileSize = 0) {
+        this.close();
+
+        const localLib = this.getLibrary();
+        const localEntries = localLib.entries || [];
+        const localCategories = localLib.categories || [];
+        const localCollections = localLib.collections || [];
+
+        let rawEntries = [];
+        let rawCategories = [];
+        let rawCollections = [];
+        let rawTags = [];
+
+        if (Array.isArray(importedData)) {
+            rawEntries = importedData;
+        } else if (importedData && typeof importedData === "object") {
+            rawEntries = importedData.entries || [];
+            rawCategories = importedData.categories || [];
+            rawCollections = importedData.collections || [];
+            rawTags = importedData.tags || [];
+        }
+
+        const localIdMap = new Map(localEntries.map((e) => [e.id, e]));
+        const localContentSet = new Set(
+            localEntries.map((e) => `${(e.title || "").trim()}:::${(e.text || e.prompt || "").trim()}`)
+        );
+
+        const newEntries = [];
+        const existingEntries = [];
+        const conflictEntries = [];
+        const duplicateEntries = [];
+        const invalidEntries = [];
+        const seenImportIds = new Set();
+
+        rawEntries.forEach((item) => {
+            const itemTitle = (item.title || "").trim();
+            const itemText = (item.text || item.prompt || "").trim();
+
+            if (!itemTitle && !itemText) {
+                invalidEntries.push({ item, reason: "缺少标题与提示词内容" });
+                return;
+            }
+
+            if (item.id && seenImportIds.has(item.id)) {
+                duplicateEntries.push({ item, reason: "导入包中存在重复 ID" });
+                return;
+            }
+            if (item.id) seenImportIds.add(item.id);
+
+            const localExact = item.id ? localIdMap.get(item.id) : null;
+            if (localExact) {
+                const localText = (localExact.text || localExact.prompt || "").trim();
+                const localTitle = (localExact.title || "").trim();
+                if (localText === itemText && localTitle === itemTitle) {
+                    existingEntries.push(item);
+                } else {
+                    conflictEntries.push({
+                        item,
+                        local: localExact,
+                        reason: "相同词条 ID 的内容已发生变化",
+                        strategy: "keep_local",
+                    });
+                }
+            } else {
+                const contentKey = `${itemTitle}:::${itemText}`;
+                if (localContentSet.has(contentKey)) {
+                    conflictEntries.push({
+                        item,
+                        local: null,
+                        reason: "本地已存在相同标题与提示词内容",
+                        strategy: "keep_local",
+                    });
+                } else {
+                    newEntries.push(item);
+                }
+            }
+        });
+
+        const hasConflicts = conflictEntries.length > 0;
+        const hasDuplicates = duplicateEntries.length > 0;
+        const hasInvalid = invalidEntries.length > 0;
+        const sizeKbText = fileSize ? `${(fileSize / 1024).toFixed(1)} KB` : "标准包";
+
+        this.overlay = document.createElement("div");
+        this.overlay.className = "prompt-vault-modal-overlay";
+        isolateCanvasEvents(this.overlay);
+
+        this.overlay.innerHTML = `
+      <div class="prompt-vault-modal pv-modal-large">
+        <div class="prompt-vault-modal-header">
+          <div class="prompt-vault-modal-title">导入词库</div>
+          <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
+        </div>
+        <div class="prompt-vault-modal-body">
+          <div class="pv-import-banner ${!hasConflicts && !hasInvalid ? "is-ok" : ""}">
+            <div class="pv-import-banner-left">
+              <span class="pv-import-banner-icon">${renderIcon(hasConflicts || hasInvalid ? "clock" : "check", 22)}</span>
+              <div>
+                <div class="pv-import-banner-title">
+                  ${hasConflicts ? "这个备份需要处理" : hasInvalid ? "备份存在无效词条" : "备份准备就绪"}
+                </div>
+                <div class="pv-import-banner-desc">
+                  ${hasConflicts ? "源备份存在冲突词条，请选择冲突解决策略后安全导入。" : "词库结构校验通过，可安全合并入库。"}
+                </div>
+              </div>
+            </div>
+            <div class="pv-import-banner-right">
+              <div style="font-weight: 600; color: #f3f4f6;">${fileName}</div>
+              <div>${sizeKbText} · 标准备份</div>
+            </div>
+          </div>
+
+          <div class="pv-import-stats-grid">
+            <div class="pv-import-stat-card">
+              <span class="pv-import-stat-num pv-stat-new">${newEntries.length}</span>
+              <span class="pv-import-stat-label">新增</span>
+            </div>
+            <div class="pv-import-stat-card">
+              <span class="pv-import-stat-num pv-stat-exist">${existingEntries.length}</span>
+              <span class="pv-import-stat-label">已有</span>
+            </div>
+            <div class="pv-import-stat-card">
+              <span class="pv-import-stat-num pv-stat-conflict">${conflictEntries.length}</span>
+              <span class="pv-import-stat-label">冲突</span>
+            </div>
+            <div class="pv-import-stat-card">
+              <span class="pv-import-stat-num pv-stat-dup">${duplicateEntries.length}</span>
+              <span class="pv-import-stat-label">重复</span>
+            </div>
+            <div class="pv-import-stat-card">
+              <span class="pv-import-stat-num pv-stat-invalid">${invalidEntries.length}</span>
+              <span class="pv-import-stat-label">无效</span>
+            </div>
+          </div>
+
+          <!-- 1. 冲突处理折叠区 (默认展开) -->
+          ${hasConflicts
+                ? `
+          <div class="pv-accordion-section is-open" id="pv-sec-conflict">
+            <div class="pv-accordion-header">
+              <div class="pv-accordion-title-group">
+                <span class="pv-accordion-title">冲突处理</span>
+                <span class="pv-accordion-subtitle">可以逐项处理，也可以为全部冲突应用同一策略。</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="prompt-vault-count-badge">${conflictEntries.length}</span>
+                <select class="pv-conflict-select" id="pv-batch-strategy" style="width: 130px;" onclick="event.stopPropagation()">
+                  <option value="">应用到全部...</option>
+                  <option value="keep_local">保留本地</option>
+                  <option value="overwrite">使用导入内容</option>
+                  <option value="copy">创建副本</option>
+                </select>
+                <span class="pv-acc-chevron">${renderIcon("chevronDown", 14)}</span>
+              </div>
+            </div>
+            <div class="pv-accordion-body">
+              ${conflictEntries
+                    .map(
+                        (c, idx) => `
+                <div class="pv-conflict-row" data-idx="${idx}">
+                  <div class="pv-conflict-info">
+                    <span class="pv-conflict-name">${c.item.title || "未命名"}</span>
+                    <span class="pv-conflict-reason">${c.reason}</span>
+                  </div>
+                  <select class="pv-conflict-select pv-item-strategy" data-idx="${idx}">
+                    <option value="keep_local" ${c.strategy === "keep_local" ? "selected" : ""}>保留本地</option>
+                    <option value="overwrite" ${c.strategy === "overwrite" ? "selected" : ""}>使用导入内容</option>
+                    <option value="copy" ${c.strategy === "copy" ? "selected" : ""}>创建副本</option>
+                  </select>
+                </div>
+              `
+                    )
+                    .join("")}
+            </div>
+          </div>
+          `
+                : ""
+            }
+
+          <!-- 2. 重复词条折叠区 -->
+          ${hasDuplicates
+                ? `
+          <div class="pv-accordion-section" id="pv-sec-duplicate">
+            <div class="pv-accordion-header">
+              <div class="pv-accordion-title-group">
+                <span class="pv-accordion-title">重复词条</span>
+                <span class="pv-accordion-subtitle">导入文件中存在重复 ID，将自动安全去重。</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="prompt-vault-count-badge" style="color: #eab308;">${duplicateEntries.length}</span>
+                <span class="pv-acc-chevron">${renderIcon("chevronDown", 14)}</span>
+              </div>
+            </div>
+            <div class="pv-accordion-body">
+              ${duplicateEntries
+                    .map(
+                        (d) => `
+                <div class="pv-entry-item-row">
+                  <span class="pv-entry-item-title">${d.item.title || "未命名"}</span>
+                  <span style="font-size: 11px; color: #eab308;">${d.reason}</span>
+                </div>
+              `
+                    )
+                    .join("")}
+            </div>
+          </div>
+          `
+                : ""
+            }
+
+          <!-- 3. 无效词条折叠区 -->
+          ${hasInvalid
+                ? `
+          <div class="pv-accordion-section" id="pv-sec-invalid">
+            <div class="pv-accordion-header">
+              <div class="pv-accordion-title-group">
+                <span class="pv-accordion-title">无效词条</span>
+                <span class="pv-accordion-subtitle">这些词条格式异常，导入时将自动安全忽略。</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="prompt-vault-count-badge" style="color: #ef4444;">${invalidEntries.length}</span>
+                <span class="pv-acc-chevron">${renderIcon("chevronDown", 14)}</span>
+              </div>
+            </div>
+            <div class="pv-accordion-body">
+              ${invalidEntries
+                    .map(
+                        (inv) => `
+                <div class="pv-entry-item-row">
+                  <span class="pv-entry-item-title">${inv.item.title || "未命名"}</span>
+                  <span style="font-size: 11px; color: #ef4444;">${inv.reason}</span>
+                </div>
+              `
+                    )
+                    .join("")}
+            </div>
+          </div>
+          `
+                : ""
+            }
+
+          <!-- 4. 已有词条折叠区 (点击可完整查看与本地一致的列表) -->
+          <div class="pv-accordion-section" id="pv-sec-existing">
+            <div class="pv-accordion-header">
+              <div class="pv-accordion-title-group">
+                <span class="pv-accordion-title">已有词条</span>
+                <span class="pv-accordion-subtitle">这些词条已与本地内容一致，无需额外处理。</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="prompt-vault-count-badge">${existingEntries.length}</span>
+                <span class="pv-acc-chevron">${renderIcon("chevronDown", 14)}</span>
+              </div>
+            </div>
+            <div class="pv-accordion-body">
+              ${existingEntries.length === 0
+                ? `<div style="font-size: 11px; color: var(--pv-text-muted); text-align: center; padding: 10px;">无完全一致的历史条目</div>`
+                : existingEntries
+                    .map(
+                        (e) => `
+                <div class="pv-entry-item-row">
+                  <span class="pv-entry-item-title">${e.title || "未命名"}</span>
+                  <span class="pv-entry-item-desc">${(e.text || e.prompt || "").replace(/[\r\n]+/g, " ")}</span>
+                </div>
+              `
+                    )
+                    .join("")
+            }
+            </div>
+          </div>
+        </div>
+        <div class="prompt-vault-modal-footer">
+          <div style="margin-right: auto; font-size: 11px; color: var(--pv-text-muted);">
+            安全事务合并，未冲突与已有词条保持完整不变
+          </div>
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-import-cancel">取消</button>
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-import-submit">
+            ${renderIcon("download", 12)} <span>执行导入</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+        document.body.appendChild(this.overlay);
+
+        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
+        const cancelBtn = this.overlay.querySelector("#pv-import-cancel");
+        const submitBtn = this.overlay.querySelector("#pv-import-submit");
+        const batchSelect = this.overlay.querySelector("#pv-batch-strategy");
+
+        const handleClose = () => this.close();
+        closeBtn.addEventListener("click", handleClose);
+        cancelBtn.addEventListener("click", handleClose);
+        this.overlay.addEventListener("click", (e) => {
+            if (e.target === this.overlay) handleClose();
+        });
+
+        // 绑定所有可折叠分栏的点击切换
+        const accordionSections = this.overlay.querySelectorAll(".pv-accordion-section");
+        accordionSections.forEach((sec) => {
+            const header = sec.querySelector(".pv-accordion-header");
+            if (header) {
+                header.addEventListener("click", (e) => {
+                    if (e.target.closest("select")) return;
+                    sec.classList.toggle("is-open");
+                });
+            }
+        });
+
+        // 批量策略切换
+        if (batchSelect) {
+            batchSelect.addEventListener("change", () => {
+                const val = batchSelect.value;
+                if (!val) return;
+                conflictEntries.forEach((c) => {
+                    c.strategy = val;
+                });
+                const selects = this.overlay.querySelectorAll(".pv-item-strategy");
+                selects.forEach((s) => {
+                    s.value = val;
+                });
+            });
+        }
+
+        // 单项策略切换
+        const itemSelects = this.overlay.querySelectorAll(".pv-item-strategy");
+        itemSelects.forEach((sel) => {
+            sel.addEventListener("change", (e) => {
+                const idx = parseInt(e.target.dataset.idx, 10);
+                if (conflictEntries[idx]) {
+                    conflictEntries[idx].strategy = e.target.value;
+                }
+            });
+        });
+
+        // 执行安全事务合并
+        submitBtn.addEventListener("click", async () => {
+            submitBtn.disabled = true;
+            submitBtn.textContent = "导入中...";
+
+            const mergedCategories = [...localCategories];
+            const localCatIds = new Set(localCategories.map((c) => c.id));
+            rawCategories.forEach((rc) => {
+                if (!localCatIds.has(rc.id)) {
+                    mergedCategories.push(rc);
+                }
+            });
+
+            const mergedCollections = [...localCollections];
+            const localColNames = new Set(localCollections.map((c) => c.name));
+            rawCollections.forEach((rcol) => {
+                if (!localColNames.has(rcol.name)) {
+                    mergedCollections.push(rcol);
+                }
+            });
+
+            const mergedTags = [...(localLib.tags || [])];
+            const localTagNames = new Set(mergedTags.map((t) => t.name));
+            rawTags.forEach((rt) => {
+                if (!localTagNames.has(rt.name)) {
+                    mergedTags.push(rt);
+                }
+            });
+
+            const finalEntries = [...localEntries];
+
+            newEntries.forEach((ne) => {
+                finalEntries.push(ne);
+            });
+
+            conflictEntries.forEach((c) => {
+                if (c.strategy === "overwrite") {
+                    const idx = finalEntries.findIndex((e) => e.id === c.item.id);
+                    if (idx !== -1) {
+                        finalEntries[idx] = c.item;
+                    } else {
+                        finalEntries.push(c.item);
+                    }
+                } else if (c.strategy === "copy") {
+                    const copyItem = {
+                        ...c.item,
+                        id: `entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                        title: `${c.item.title || "词条"} (副本)`,
+                    };
+                    finalEntries.push(copyItem);
+                }
+            });
+
+            const resolvedLibrary = {
+                format: "aaalice-prompt-library",
+                version: 2,
+                categories: mergedCategories,
+                collections: mergedCollections,
+                tags: mergedTags,
+                entries: finalEntries,
+                selection: localLib.selection || { entryIds: [] },
+            };
+
+            const resolvedFile = new File(
+                [new Blob([JSON.stringify(resolvedLibrary, null, 2)], { type: "application/json" })],
+                fileName,
+                { type: "application/json" }
+            );
+
+            const res = await importLibrary(resolvedFile, "overwrite");
+            if (res && res.success) {
+                if (typeof this.onUpdated === "function") await this.onUpdated();
+                this.close();
+            } else {
+                alert(`导入失败: ${res?.error || "服务未响应"}`);
+                submitBtn.disabled = false;
+                submitBtn.textContent = "执行导入";
+            }
+        });
+    }
+
+    close() {
+        if (this.overlay && this.overlay.parentNode) {
+            this.overlay.parentNode.removeChild(this.overlay);
+        }
+        this.overlay = null;
+    }
+}
+
+/* =========================================================================
+   6. 导出数据统计与预览中心
+   ========================================================================= */
+
+export class ExportModalManager {
+    /**
+     * @param {() => any} getLibraryCallback
+     */
+    constructor(getLibraryCallback) {
+        this.getLibrary = getLibraryCallback;
+        this.overlay = null;
+    }
+
+    open() {
+        this.close();
+        const lib = this.getLibrary();
+        const entries = lib.entries || [];
+        const categories = lib.categories || [];
+        const collections = lib.collections || [];
+
+        const thumbnailsCount = entries.filter((e) => Boolean(e.previewHash || e.thumbnail)).length;
+
+        this.overlay = document.createElement("div");
+        this.overlay.className = "prompt-vault-modal-overlay";
+        isolateCanvasEvents(this.overlay);
+
+        this.overlay.innerHTML = `
+      <div class="prompt-vault-modal pv-modal-medium" style="max-width: 660px;">
+        <div class="prompt-vault-modal-header">
+          <div class="prompt-vault-modal-title">导出</div>
+          <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
+        </div>
+        <div class="prompt-vault-modal-body">
+          <div class="pv-export-card">
+            <div class="pv-export-card-left">
+              <span style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: rgba(168, 85, 247, 0.15); color: #c084fc;">
+                ${renderIcon("upload", 20)}
+              </span>
+              <div>
+                <span class="pv-export-badge">便携备份</span>
+                <div class="pv-export-title">导出提示词库</div>
+                <div class="pv-export-subtitle">相关分类、收藏夹、标签和预览图引用会自动打包。</div>
+              </div>
+            </div>
+            <div class="pv-export-card-right">
+              <div class="pv-export-filename">prompt_library_export.json</div>
+              <div class="pv-export-format">JSON 标准格式</div>
+            </div>
+          </div>
+
+          <div class="pv-export-stats-grid">
+            <div class="pv-export-stat-box">
+              <span class="pv-export-stat-num">${entries.length}</span>
+              <span class="pv-export-stat-label">词条</span>
+            </div>
+            <div class="pv-export-stat-box">
+              <span class="pv-export-stat-num">${categories.length}</span>
+              <span class="pv-export-stat-label">分类</span>
+            </div>
+            <div class="pv-export-stat-box">
+              <span class="pv-export-stat-num">${collections.length}</span>
+              <span class="pv-export-stat-label">收藏夹</span>
+            </div>
+            <div class="pv-export-stat-box">
+              <span class="pv-export-stat-num">${thumbnailsCount}</span>
+              <span class="pv-export-stat-label">预览图</span>
+            </div>
+          </div>
+        </div>
+        <div class="prompt-vault-modal-footer">
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-export-cancel">取消</button>
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-export-confirm">
+            ${renderIcon("upload", 12)} <span>导出</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+        document.body.appendChild(this.overlay);
+
+        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
+        const cancelBtn = this.overlay.querySelector("#pv-export-cancel");
+        const confirmBtn = this.overlay.querySelector("#pv-export-confirm");
+
+        const handleClose = () => this.close();
+        closeBtn.addEventListener("click", handleClose);
+        cancelBtn.addEventListener("click", handleClose);
+        this.overlay.addEventListener("click", (e) => {
+            if (e.target === this.overlay) handleClose();
+        });
+
+        confirmBtn.addEventListener("click", () => {
+            triggerExportLibrary();
+            this.close();
+        });
+    }
+
+    close() {
+        if (this.overlay && this.overlay.parentNode) {
+            this.overlay.parentNode.removeChild(this.overlay);
+        }
+        this.overlay = null;
     }
 }

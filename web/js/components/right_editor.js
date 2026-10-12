@@ -3,7 +3,8 @@
 /**
  * 右侧详情与实时编辑器组件。
  * 保持持久 DOM 引用以杜绝打字过程中的焦点丢失，
- * 多重监听 input/change/blur 以兼容外部三方格式化插件，
+ * 直接与标准分类实体 (categoryId) 双向绑定，
+ * 多重监听 input/change/blur 捕获外部三方格式化插件，
  * 点击入库时实时读取最新 DOM 内容并杜绝未格式化旧文本流出。
  */
 
@@ -11,12 +12,12 @@ import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 
 /**
- * 将平铺分类树展开为带缩进前缀的扁平下拉选项列表。
+ * 递归扁平化分类树为带缩进的前缀下拉选项。
  * @param {any[]} categories
- * @returns {{ name: string, label: string }[]}
+ * @returns {{ id: string, name: string, label: string }[]}
  */
 function buildCategoryHierarchyOptions(categories) {
-    const result = [{ name: "未分类", label: "未分类" }];
+    const result = [{ id: "", name: "未分类", label: "未分类" }];
     const map = new Map();
     const roots = [];
 
@@ -25,8 +26,8 @@ function buildCategoryHierarchyOptions(categories) {
     });
 
     categories.forEach((c) => {
-        if (c.parent_id && map.has(c.parent_id)) {
-            map.get(c.parent_id).children.push(map.get(c.id));
+        if (c.parentId && map.has(c.parentId)) {
+            map.get(c.parentId).children.push(map.get(c.id));
         } else {
             roots.push(map.get(c.id));
         }
@@ -35,6 +36,7 @@ function buildCategoryHierarchyOptions(categories) {
     function traverse(node, depth) {
         const prefix = depth === 0 ? "" : `${"  ".repeat(depth)}└─ `;
         result.push({
+            id: node.id,
             name: node.name,
             label: `${prefix}${node.name}`,
         });
@@ -51,20 +53,20 @@ export class RightEditorComponent {
     /**
      * @param {HTMLElement} container - 右栏宿主 DOM 容器
      * @param {import("../state.js").VaultNodeState} state - 状态机实例
-     * @param {() => any[]} getPresetsCallback - 获取全量预设列表回调
-     * @param {() => any[]} getCategoriesCallback - 获取全量分类树回调
+     * @param {() => any[]} getEntriesCallback - 获取全量 entries 回调
+     * @param {() => any[]} getCategoriesCallback - 获取全量 categories 回调
      * @param {(tileDraft: any) => void} onSaveToVaultCallback - 保存到词库回调
      */
     constructor(
         container,
         state,
-        getPresetsCallback,
+        getEntriesCallback,
         getCategoriesCallback,
         onSaveToVaultCallback
     ) {
         this.container = container;
         this.state = state;
-        this.getPresets = getPresetsCallback;
+        this.getEntries = getEntriesCallback;
         this.getCategories = getCategoriesCallback;
         this.onSaveToVault = onSaveToVaultCallback;
 
@@ -75,9 +77,6 @@ export class RightEditorComponent {
         this.state.subscribe(() => this.updateView());
     }
 
-    /**
-     * 初始化一次性持久化 DOM 结构，避免重复销毁重建引起打字焦点丢失。
-     */
     initDOM() {
         this.container.innerHTML = "";
 
@@ -131,7 +130,7 @@ export class RightEditorComponent {
                 this.state.updateTileContent(
                     activeTile.instance_id,
                     { title: this.titleInput.value },
-                    this.getPresets()
+                    this.getEntries()
                 );
             }
         };
@@ -140,7 +139,7 @@ export class RightEditorComponent {
         titleGroup.appendChild(this.titleInput);
         this.formContainer.appendChild(titleGroup);
 
-        // 2. 分类编辑项：层级下拉框
+        // 2. 分类编辑项：层级下拉框绑定 categoryId
         const catGroup = document.createElement("div");
         catGroup.className = "prompt-vault-editor-group";
         catGroup.innerHTML = `<label class="prompt-vault-editor-label">所属分类</label>`;
@@ -149,17 +148,22 @@ export class RightEditorComponent {
         this.catSelect.addEventListener("change", () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
+                const catId = this.catSelect.value || null;
+                const matched = this.getCategories().find((c) => c.id === catId);
                 this.state.updateTileContent(
                     activeTile.instance_id,
-                    { category: this.catSelect.value },
-                    this.getPresets()
+                    {
+                        category_id: catId,
+                        category: matched ? matched.name : "未分类",
+                    },
+                    this.getEntries()
                 );
             }
         });
         catGroup.appendChild(this.catSelect);
         this.formContainer.appendChild(catGroup);
 
-        // 3. 提示词主体多行通用文本域：同时监听 input/change/blur 以捕获三方插件自动格式化后的内容
+        // 3. 提示词主体多行通用文本域
         const promptGroup = document.createElement("div");
         promptGroup.className = "prompt-vault-editor-group";
         promptGroup.style.flex = "1 1 0";
@@ -178,7 +182,7 @@ export class RightEditorComponent {
                 this.state.updateTileContent(
                     activeTile.instance_id,
                     { prompt: this.textarea.value },
-                    this.getPresets()
+                    this.getEntries()
                 );
             }
         };
@@ -201,9 +205,13 @@ export class RightEditorComponent {
         this.revertBtn.addEventListener("click", () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
-                this.state.revertTileToPreset(activeTile.instance_id, this.getPresets());
+                this.state.revertTileToPreset(
+                    activeTile.instance_id,
+                    this.getEntries(),
+                    this.getCategories()
+                );
                 this.titleInput.value = activeTile.title || "";
-                this.catSelect.value = activeTile.category || "未分类";
+                this.catSelect.value = activeTile.category_id || "";
                 this.textarea.value = activeTile.prompt || "";
             }
         });
@@ -217,19 +225,21 @@ export class RightEditorComponent {
         this.saveToVaultBtn.addEventListener("click", () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
-                // 点击瞬间强制用当前 DOM 文本域内最新格式化后的内容更新状态机，杜绝格式化前旧文本流出
+                const catId = this.catSelect.value || null;
+                const matched = this.getCategories().find((c) => c.id === catId);
+
                 this.state.updateTileContent(
                     activeTile.instance_id,
                     {
                         title: this.titleInput.value.trim(),
-                        category: this.catSelect.value,
+                        category_id: catId,
+                        category: matched ? matched.name : "未分类",
                         prompt: this.textarea.value,
                     },
-                    this.getPresets()
+                    this.getEntries()
                 );
 
                 if (typeof this.onSaveToVault === "function") {
-                    // 获取更新后的最新快照传入弹窗
                     this.onSaveToVault(this.state.getActiveTile());
                 }
             }
@@ -251,12 +261,12 @@ export class RightEditorComponent {
         this.catSelect.innerHTML = "";
         options.forEach((opt) => {
             const el = document.createElement("option");
-            el.value = opt.name;
+            el.value = opt.id;
             el.textContent = opt.label;
             this.catSelect.appendChild(el);
         });
 
-        if (curVal) {
+        if (curVal !== undefined) {
             this.catSelect.value = curVal;
         }
     }
@@ -276,16 +286,14 @@ export class RightEditorComponent {
         this.emptyState.style.display = "none";
         this.formContainer.style.display = "flex";
 
-        // 仅在切换到不同磁贴实例或当前磁贴已同步保存时，同步重写输入框内容
         if (this.renderedInstanceId !== activeTile.instance_id) {
             this.renderedInstanceId = activeTile.instance_id;
             this.titleInput.value = activeTile.title || "";
-            this.catSelect.value = activeTile.category || "未分类";
+            this.catSelect.value = activeTile.category_id || "";
             this.textarea.value = activeTile.prompt || "";
         } else if (!activeTile.is_dirty) {
-            // 磁贴刚被重置或入库成功，同步刷新文本框展示值
             this.titleInput.value = activeTile.title || "";
-            this.catSelect.value = activeTile.category || "未分类";
+            this.catSelect.value = activeTile.category_id || "";
             this.textarea.value = activeTile.prompt || "";
         }
 

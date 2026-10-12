@@ -2,8 +2,9 @@
 
 /**
  * 磁贴卡片（Tile）核心渲染组件。
- * 提供词库单击即选/反选与选中高亮外框、词库悬浮删除按钮、只读滚轮权重调节（0.1步长）、
- * 纯内联 SVG 矢量图标展示、分类色彩动态标签以及鼠标延时悬浮详情预览弹窗。
+ * 对齐 aaalice-prompt-library v2 数据标准（text、categoryId、previewHash、tagIds），
+ * 提供词库单击即选/反选与高亮包裹框、悬浮删除确认弹窗、只读滚轮权重微调（0.1步长）、
+ * 分类色彩动态徽章及鼠标延时悬浮详情预览弹窗。
  */
 
 import { getThumbnailUrl } from "../api.js";
@@ -11,14 +12,9 @@ import { isolateCanvasEvents, isolateDragEvents } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { formatWeightBadgeText } from "../utils/prompt_format.js";
 
-/** 全局活跃的悬浮气泡元素引用 */
 let activePopoverElement = null;
-/** 全局防抖定时器 */
 let activePopoverTimer = null;
 
-/**
- * 移除屏幕上当前活跃的悬浮气泡。
- */
 function removeActivePopover() {
     if (activePopoverTimer) {
         clearTimeout(activePopoverTimer);
@@ -31,12 +27,13 @@ function removeActivePopover() {
 }
 
 /**
- * 在目标磁贴近邻渲染悬浮详情预览气泡。
+ * 渲染悬浮详情预览气泡。
  * @param {HTMLElement} targetTile
  * @param {any} data
- * @param {any[]} categoriesConfig
+ * @param {any[]} categories
+ * @param {any[]} tagsDict
  */
-function showPopover(targetTile, data, categoriesConfig) {
+function showPopover(targetTile, data, categories, tagsDict) {
     removeActivePopover();
 
     const popover = document.createElement("div");
@@ -51,33 +48,38 @@ function showPopover(targetTile, data, categoriesConfig) {
     title.textContent = data.title || "未命名词条";
     header.appendChild(title);
 
-    if (data.category) {
+    const matchedCat = categories.find(
+        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+    );
+
+    if (matchedCat) {
         const badge = document.createElement("span");
         badge.className = "prompt-vault-tile-badge";
-        badge.textContent = data.category;
-        const matched = categoriesConfig.find((c) => c.name === data.category);
-        if (matched && matched.color) {
-            badge.style.backgroundColor = `${matched.color}22`;
-            badge.style.color = matched.color;
-            badge.style.borderColor = `${matched.color}44`;
+        badge.textContent = matchedCat.name;
+        if (matchedCat.color) {
+            badge.style.backgroundColor = `${matchedCat.color}22`;
+            badge.style.color = matchedCat.color;
+            badge.style.borderColor = `${matchedCat.color}44`;
         }
         header.appendChild(badge);
     }
     popover.appendChild(header);
 
-    // 2. 预览图展示（若包含有效图片）
-    if (data.thumbnail) {
+    // 2. 预览图展示
+    const thumbPath = data.previewHash || data.thumbnail;
+    if (thumbPath) {
         const previewBox = document.createElement("div");
         previewBox.className = "prompt-vault-popover-preview";
         const img = document.createElement("img");
-        img.src = getThumbnailUrl(data.thumbnail);
+        img.src = getThumbnailUrl(thumbPath);
         img.alt = "preview";
         previewBox.appendChild(img);
         popover.appendChild(previewBox);
     }
 
-    // 3. 提示词完整内容
-    if (data.prompt) {
+    // 3. 提示词完整内容 (text 或 prompt)
+    const promptContent = data.text || data.prompt || "";
+    if (promptContent) {
         const promptLabel = document.createElement("div");
         promptLabel.className = "prompt-vault-popover-section-label";
         promptLabel.textContent = "提示词";
@@ -85,13 +87,24 @@ function showPopover(targetTile, data, categoriesConfig) {
 
         const promptText = document.createElement("div");
         promptText.className = "prompt-vault-popover-prompt";
-        promptText.textContent = data.prompt;
+        promptText.textContent = promptContent;
         popover.appendChild(promptText);
     }
 
-    // 4. 标签列表
-    const tags = Array.isArray(data.tags) ? data.tags : [];
-    if (tags.length > 0) {
+    // 4. 标签列表解析 (根据 tagIds 查字典或直接读取 tags)
+    const tagIds = Array.isArray(data.tagIds) ? data.tagIds : [];
+    const directTags = Array.isArray(data.tags) ? data.tags : [];
+    const tagNames = [];
+
+    tagIds.forEach((tid) => {
+        const found = tagsDict.find((t) => t.id === tid);
+        if (found) tagNames.push(found.name);
+    });
+    directTags.forEach((t) => {
+        if (typeof t === "string" && !tagNames.includes(t)) tagNames.push(t);
+    });
+
+    if (tagNames.length > 0) {
         const tagLabel = document.createElement("div");
         tagLabel.className = "prompt-vault-popover-section-label";
         tagLabel.textContent = "标签";
@@ -99,7 +112,7 @@ function showPopover(targetTile, data, categoriesConfig) {
 
         const tagContainer = document.createElement("div");
         tagContainer.className = "prompt-vault-popover-tags";
-        tags.forEach((t) => {
+        tagNames.forEach((t) => {
             const tb = document.createElement("span");
             tb.className = "prompt-vault-popover-tag-badge";
             tb.textContent = t;
@@ -111,7 +124,6 @@ function showPopover(targetTile, data, categoriesConfig) {
     document.body.appendChild(popover);
     activePopoverElement = popover;
 
-    // 定位计算：默认置于磁贴右方或下方，防屏幕越界
     const rect = targetTile.getBoundingClientRect();
     const popoverWidth = 320;
     let left = rect.right + 10;
@@ -131,14 +143,15 @@ function showPopover(targetTile, data, categoriesConfig) {
 /**
  * 创建磁贴卡片 DOM 节点。
  * @param {Object} options
- * @param {any} options.data - 磁贴数据对象（预设项或已选实例）
- * @param {"vault"|"selected"} options.mode - 展示模式：'vault' (左侧词库) 或 'selected' (中间已选)
- * @param {import("../state.js").VaultNodeState} options.state - 节点状态机实例
- * @param {boolean} [options.isActive=false] - 是否处于激活选中编辑态
- * @param {boolean} [options.isAlreadyAdded=false] - 左侧模式下是否已被加入已选列表
- * @param {any[]} [options.categoriesConfig=[]] - 分类元数据列表（用于获取自定义颜色）
- * @param {(preset: any) => void} [options.onToggleFavorite] - 触发收藏联动弹窗回调
- * @param {(preset: any) => void} [options.onDeletePreset] - 触发词库词条删除确认弹窗回调
+ * @param {any} options.data - 磁贴数据对象（标准 entry 实体或已选实例）
+ * @param {"vault"|"selected"} options.mode - 展示模式
+ * @param {import("../state.js").VaultNodeState} options.state - 节点状态机
+ * @param {boolean} [options.isActive=false] - 是否激活编辑
+ * @param {boolean} [options.isAlreadyAdded=false] - 是否已选
+ * @param {any[]} [options.categories=[]] - 分类元数据树
+ * @param {any[]} [options.tagsDict=[]] - 标签字典
+ * @param {(entry: any) => void} [options.onToggleFavorite] - 收藏回调
+ * @param {(entry: any) => void} [options.onDeleteEntry] - 词条删除二次确认回调
  * @returns {HTMLElement} 磁贴卡片元素
  */
 export function createTileElement({
@@ -147,9 +160,10 @@ export function createTileElement({
     state,
     isActive = false,
     isAlreadyAdded = false,
-    categoriesConfig = [],
+    categories = [],
+    tagsDict = [],
     onToggleFavorite,
-    onDeletePreset,
+    onDeleteEntry,
 }) {
     const isSelectedMode = mode === "selected";
     const instanceId = isSelectedMode ? data.instance_id : null;
@@ -168,11 +182,11 @@ export function createTileElement({
 
     isolateCanvasEvents(tile);
 
-    // 悬停延迟展示详情预览气泡逻辑 (500ms 防抖)
+    // 悬停延迟展示预览气泡
     tile.addEventListener("mouseenter", () => {
         if (activePopoverTimer) clearTimeout(activePopoverTimer);
         activePopoverTimer = setTimeout(() => {
-            showPopover(tile, data, categoriesConfig);
+            showPopover(tile, data, categories, tagsDict);
         }, 450);
     });
 
@@ -180,7 +194,7 @@ export function createTileElement({
         removeActivePopover();
     });
 
-    // 点击卡片主体交互逻辑
+    // 点击卡片交互
     tile.addEventListener("click", (event) => {
         removeActivePopover();
         if (event.target.closest(".prompt-vault-tile-actions")) return;
@@ -192,7 +206,7 @@ export function createTileElement({
             if (existing) {
                 state.removeTile(existing.instance_id);
             } else {
-                state.addTileFromPreset(data);
+                state.addTileFromEntry(data, categories);
             }
         }
     });
@@ -200,9 +214,10 @@ export function createTileElement({
     // 2. 缩略图区域
     const thumbBox = document.createElement("div");
     thumbBox.className = "prompt-vault-tile-thumb";
-    if (data.thumbnail) {
+    const thumbPath = data.previewHash || data.thumbnail;
+    if (thumbPath) {
         const img = document.createElement("img");
-        img.src = getThumbnailUrl(data.thumbnail);
+        img.src = getThumbnailUrl(thumbPath);
         img.alt = data.title || "thumbnail";
         img.loading = "lazy";
         img.onerror = () => {
@@ -227,23 +242,22 @@ export function createTileElement({
     titleText.title = data.title || "";
     titleRow.appendChild(titleText);
 
-    // 分类胶囊 Badge
-    if (data.category) {
+    // 解析并渲染分类胶囊 Badge 与色彩
+    const matchedCat = categories.find(
+        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+    );
+    if (matchedCat) {
         const catBadge = document.createElement("span");
         catBadge.className = "prompt-vault-tile-badge";
-        catBadge.textContent = data.category;
-
-        const matchedCat = categoriesConfig.find((c) => c.name === data.category);
-        if (matchedCat && matchedCat.color) {
-            const c = matchedCat.color;
-            catBadge.style.backgroundColor = `${c}22`;
-            catBadge.style.color = c;
-            catBadge.style.borderColor = `${c}44`;
+        catBadge.textContent = matchedCat.name;
+        if (matchedCat.color) {
+            catBadge.style.backgroundColor = `${matchedCat.color}22`;
+            catBadge.style.color = matchedCat.color;
+            catBadge.style.borderColor = `${matchedCat.color}44`;
         }
         titleRow.appendChild(catBadge);
     }
 
-    // 草稿修改指示器
     if (isDirty) {
         const dirtyBadge = document.createElement("span");
         dirtyBadge.className = "prompt-vault-tile-dirty-badge";
@@ -254,15 +268,16 @@ export function createTileElement({
 
     const snippet = document.createElement("div");
     snippet.className = "prompt-vault-tile-snippet";
-    snippet.textContent = (data.prompt || "").replace(/[\r\n]+/g, " ");
+    const promptText = data.text || data.prompt || "";
+    snippet.textContent = promptText.replace(/[\r\n]+/g, " ");
     infoBox.appendChild(snippet);
     tile.appendChild(infoBox);
 
-    // 4. 右侧 Hover 浮动操作栏
+    // 4. 右侧 Hover 操作栏
     const actionsBar = document.createElement("div");
     actionsBar.className = "prompt-vault-tile-actions";
 
-    // 4.1 权重微调器（已选列表模式）
+    // 4.1 权重微调器（已选列表）
     if (isSelectedMode) {
         const weightBadge = document.createElement("div");
         weightBadge.className = "prompt-vault-tile-weight";
@@ -281,7 +296,6 @@ export function createTileElement({
         );
         actionsBar.appendChild(weightBadge);
 
-        // 静音切换按钮
         const muteBtn = document.createElement("button");
         muteBtn.type = "button";
         muteBtn.className = "prompt-vault-tile-btn";
@@ -294,14 +308,15 @@ export function createTileElement({
         actionsBar.appendChild(muteBtn);
     }
 
-    // 4.2 收藏星标按钮（词库模式）
+    // 4.2 收藏按钮（词库模式）
     if (!isSelectedMode) {
+        const isFavorited = (Array.isArray(data.collections) && data.collections.length > 0) || Boolean(data.favorite);
         const starBtn = document.createElement("button");
         starBtn.type = "button";
         starBtn.className = "prompt-vault-tile-btn";
-        if (data.favorite) starBtn.classList.add("is-starred");
-        starBtn.title = data.favorite ? "已收藏 (点击取消或移动)" : "加入收藏夹";
-        starBtn.innerHTML = renderIcon(data.favorite ? "starFilled" : "star", 13);
+        if (isFavorited) starBtn.classList.add("is-starred");
+        starBtn.title = isFavorited ? "已收藏 (点击取消或移动)" : "加入收藏夹";
+        starBtn.innerHTML = renderIcon(isFavorited ? "starFilled" : "star", 13);
         starBtn.addEventListener("click", (event) => {
             event.stopPropagation();
             removeActivePopover();
@@ -312,7 +327,7 @@ export function createTileElement({
         actionsBar.appendChild(starBtn);
     }
 
-    // 4.3 一键复制完整提示词到剪贴板
+    // 4.3 复制 Prompt
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "prompt-vault-tile-btn";
@@ -321,7 +336,7 @@ export function createTileElement({
     copyBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
-            await navigator.clipboard.writeText(data.prompt || "");
+            await navigator.clipboard.writeText(promptText);
             copyBtn.innerHTML = renderIcon("check", 13);
             setTimeout(() => {
                 copyBtn.innerHTML = renderIcon("copy", 13);
@@ -332,7 +347,7 @@ export function createTileElement({
     });
     actionsBar.appendChild(copyBtn);
 
-    // 4.4 词库模式专属：删除词条按钮
+    // 4.4 词库模式专属：从库中删除词条
     if (!isSelectedMode) {
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
@@ -342,14 +357,14 @@ export function createTileElement({
         deleteBtn.addEventListener("click", (event) => {
             event.stopPropagation();
             removeActivePopover();
-            if (typeof onDeletePreset === "function") {
-                onDeletePreset(data);
+            if (typeof onDeleteEntry === "function") {
+                onDeleteEntry(data);
             }
         });
         actionsBar.appendChild(deleteBtn);
     }
 
-    // 4.5 中栏模式专属：移出已选序列按钮
+    // 4.5 中栏模式专属：移出已选
     if (isSelectedMode) {
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
@@ -366,7 +381,7 @@ export function createTileElement({
 
     tile.appendChild(actionsBar);
 
-    // 5. HTML5 拖拽排序逻辑（仅对已选列表生效）
+    // 5. HTML5 拖拽排序逻辑
     if (isSelectedMode) {
         tile.setAttribute("draggable", "true");
         isolateDragEvents(tile);

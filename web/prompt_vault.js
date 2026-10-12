@@ -2,16 +2,19 @@
 
 /**
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
- * 负责装配三栏布局、管理全局分类与收藏夹状态树、
- * 绑定生命周期持久化、预设保存后脏标记同步清理与全套弹窗交互。
+ * 全面对齐 aaalice-prompt-library v2 标准数据模型，
+ * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
+ * 接入导入预检冲突处理中心及导出预览统计中心。
  */
 
 import { app } from "../../../scripts/app.js";
-import { fetchPresets, fetchTaxonomies, importPresets, upsertPreset } from "./js/api.js";
+import { fetchLibrary } from "./js/api.js";
 import { LeftVaultComponent } from "./js/components/left_vault.js";
 import { MiddleSelectedComponent } from "./js/components/middle_selected.js";
 import {
+    ExportModalManager,
     FavoriteModalManager,
+    ImportModalManager,
     PresetModalManager,
     TaxonomyModalManager,
     TileDeleteConfirmModal,
@@ -23,9 +26,16 @@ import { isolateCanvasEvents } from "./js/utils/events.js";
 /** 目标节点名称标识 */
 const TARGET_NODE_TYPE = "PromptVaultSelector";
 
-/** 全局预设、分类与收藏夹数据共享缓存池 */
-let globalPresets = [];
-let globalTaxonomies = { categories: [], folders: [] };
+/** 全局标准库缓存数据 (直接对齐 library.json 结构) */
+let globalLibrary = {
+    format: "aaalice-prompt-library",
+    version: 2,
+    categories: [],
+    collections: [],
+    tags: [],
+    entries: [],
+    selection: { entryIds: [] },
+};
 
 function injectStyleSheet(href) {
     const existing = document.querySelector(`link[href="${href}"]`);
@@ -43,16 +53,9 @@ injectStyleSheet(new URL("./css/tile.css", import.meta.url).href);
 injectStyleSheet(new URL("./css/modal.css", import.meta.url).href);
 
 async function refreshGlobalData() {
-    const [presetsRes, taxonomiesRes] = await Promise.all([
-        fetchPresets(),
-        fetchTaxonomies(),
-    ]);
-
-    if (presetsRes.success) {
-        globalPresets = presetsRes.presets;
-    }
-    if (taxonomiesRes.success) {
-        globalTaxonomies = taxonomiesRes.data;
+    const res = await fetchLibrary();
+    if (res && res.success && res.data) {
+        globalLibrary = res.data;
     }
 }
 
@@ -112,32 +115,14 @@ app.registerExtension({
 
             container.appendChild(grid);
 
-            const importInput = document.createElement("input");
-            importInput.type = "file";
-            importInput.accept = ".json";
-            importInput.style.display = "none";
-            importInput.addEventListener("change", async (e) => {
-                const file = e.target.files && e.target.files[0];
-                if (file) {
-                    const res = await importPresets(file, "merge");
-                    if (res.success) {
-                        await refreshGlobalData();
-                        state.notify();
-                    } else {
-                        alert(`导入失败: ${res.error || "数据格式错误"}`);
-                    }
-                    importInput.value = "";
-                }
-            });
-            container.appendChild(importInput);
-
             const notifyRefresh = async () => {
                 await refreshGlobalData();
                 state.notify();
             };
 
+            // 实例化全套专业弹窗管理器
             const presetModalManager = new PresetModalManager(
-                () => globalTaxonomies,
+                () => globalLibrary,
                 notifyRefresh
             );
 
@@ -146,60 +131,98 @@ app.registerExtension({
             );
 
             const favoriteModalManager = new FavoriteModalManager(
-                () => globalTaxonomies.folders,
+                () => globalLibrary.collections || [],
                 notifyRefresh
             );
 
             const taxonomyModalManager = new TaxonomyModalManager(
-                () => globalTaxonomies,
-                () => globalPresets,
+                () => globalLibrary,
                 notifyRefresh
             );
 
+            const importModalManager = new ImportModalManager(
+                () => globalLibrary,
+                notifyRefresh
+            );
+
+            const exportModalManager = new ExportModalManager(
+                () => globalLibrary
+            );
+
+            // 隐藏的 JSON 文件选择器
+            const importInput = document.createElement("input");
+            importInput.type = "file";
+            importInput.accept = ".json";
+            importInput.style.display = "none";
+            importInput.addEventListener("change", (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const text = String(event.target.result || "").replace(/^\ufeff/, "");
+                            const parsed = JSON.parse(text);
+                            importModalManager.open(parsed, file.name, file.size);
+                        } catch (err) {
+                            alert(`读取 JSON 文件失败: ${String(err)}`);
+                        }
+                    };
+                    reader.readAsText(file);
+                    importInput.value = "";
+                }
+            });
+            container.appendChild(importInput);
+
+            // 挂载左栏组件（接入导入预检处理与导出统计预览）
             new LeftVaultComponent(
                 colLeft,
                 state,
-                () => globalPresets,
-                () => globalTaxonomies,
-                (preset) => presetModalManager.open(preset),
-                (preset) => favoriteModalManager.handleToggleFavorite(preset),
+                () => globalLibrary,
+                (entry) => presetModalManager.open(entry),
+                (entry) => favoriteModalManager.handleToggleFavorite(entry),
                 () => taxonomyModalManager.open(),
-                (preset) => tileDeleteConfirmModal.open(preset),
-                () => importInput.click()
+                (entry) => tileDeleteConfirmModal.open(entry),
+                () => importInput.click(),
+                () => exportModalManager.open()
             );
 
+            // 挂载中栏组件
             new MiddleSelectedComponent(
                 colMiddle,
                 state,
-                () => globalTaxonomies.categories,
+                () => globalLibrary.categories || [],
                 (tileDraft) => {
                     presetModalManager.open({
                         title: tileDraft.title,
-                        prompt: tileDraft.prompt,
-                        category: tileDraft.category,
-                        thumbnail: tileDraft.thumbnail,
+                        text: tileDraft.prompt,
+                        categoryId: tileDraft.category_id,
+                        previewHash: tileDraft.thumbnail,
                     });
                 }
             );
 
+            // 挂载右栏组件
             new RightEditorComponent(
                 colRight,
                 state,
-                () => globalPresets,
-                () => globalTaxonomies.categories,
+                () => globalLibrary.entries || [],
+                () => globalLibrary.categories || [],
                 (tileDraft) => {
                     presetModalManager.open({
                         id: tileDraft.ref_preset_id || undefined,
                         title: tileDraft.title,
-                        prompt: tileDraft.prompt,
-                        category: tileDraft.category,
-                        thumbnail: tileDraft.thumbnail,
+                        text: tileDraft.prompt,
+                        categoryId: tileDraft.category_id,
+                        previewHash: tileDraft.thumbnail,
                     });
-                    // 接收服务端返回的有效实体，精准同步清除脏标记并重置 ref_preset_id
-                    presetModalManager.onSaved = async (savedData) => {
+                    presetModalManager.onSaved = async (savedEntry) => {
                         await refreshGlobalData();
-                        if (savedData) {
-                            state.markTileAsSavedToPreset(tileDraft.instance_id, savedData);
+                        if (savedEntry) {
+                            state.markTileAsSavedToPreset(
+                                tileDraft.instance_id,
+                                savedEntry,
+                                globalLibrary.categories || []
+                            );
                         }
                         state.notify();
                     };

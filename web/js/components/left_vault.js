@@ -2,22 +2,17 @@
 
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
- * 提供分类与收藏夹双下拉联动筛选、关键词即时检索、
- * 分类与收藏夹全功能管理入口、词条二次确认删除及单击即选/反选交互。
+ * 提供分类与收藏夹双下拉联动筛选、多维度即时检索、
+ * 分类与收藏夹全功能管理入口、磁贴单击选择/反选，
+ * 并将导入与导出全面改造为具备预检和预览的专业弹窗交互。
  */
 
-import { triggerExportPresets } from "../api.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { createTileElement } from "./tile.js";
 
-/**
- * 递归构建分类扁平层级下拉选项。
- * @param {any[]} categories
- * @returns {{ name: string, label: string }[]}
- */
 function buildCategoryHierarchyOptions(categories) {
-    const result = [{ name: "ALL", label: "全部分类" }];
+    const result = [{ id: "ALL", name: "全部分类", label: "全部分类" }];
     const map = new Map();
     const roots = [];
 
@@ -26,8 +21,8 @@ function buildCategoryHierarchyOptions(categories) {
     });
 
     categories.forEach((c) => {
-        if (c.parent_id && map.has(c.parent_id)) {
-            map.get(c.parent_id).children.push(map.get(c.id));
+        if (c.parentId && map.has(c.parentId)) {
+            map.get(c.parentId).children.push(map.get(c.id));
         } else {
             roots.push(map.get(c.id));
         }
@@ -36,6 +31,7 @@ function buildCategoryHierarchyOptions(categories) {
     function traverse(node, depth) {
         const prefix = depth === 0 ? "" : `${"  ".repeat(depth)}└─ `;
         result.push({
+            id: node.id,
             name: node.name,
             label: `${prefix}${node.name}`,
         });
@@ -52,37 +48,37 @@ export class LeftVaultComponent {
     /**
      * @param {HTMLElement} container - 左栏宿主 DOM 容器
      * @param {import("../state.js").VaultNodeState} state - 状态机实例
-     * @param {() => any[]} getPresetsCallback - 获取词库条目列表回调
-     * @param {() => { categories: any[], folders: any[] }} getTaxonomiesCallback - 获取分类与收藏夹配置回调
-     * @param {(preset: any) => void} onOpenPresetModalCallback - 打开词条录入弹窗回调
-     * @param {(preset: any) => void} onOpenFavoriteModalCallback - 打开收藏联动弹窗回调
+     * @param {() => { categories: any[], collections: any[], tags: any[], entries: any[] }} getLibraryCallback - 获取全量库回调
+     * @param {(entry: any) => void} onOpenEntryModalCallback - 打开词条录入弹窗回调
+     * @param {(entry: any) => void} onOpenFavoriteModalCallback - 打开收藏联动弹窗回调
      * @param {() => void} onOpenTaxonomyManagerCallback - 打开分类与收藏夹管理中心回调
-     * @param {(preset: any) => void} onDeletePresetCallback - 打开词条删除二次确认弹窗回调
-     * @param {() => void} onImportTriggerCallback - 唤起导入文件选择回调
+     * @param {(entry: any) => void} onDeleteEntryCallback - 打开词条删除确认弹窗回调
+     * @param {() => void} onOpenImportModalCallback - 唤起导入冲突预检处理弹窗回调
+     * @param {() => void} onOpenExportModalCallback - 唤起导出预览弹窗回调
      */
     constructor(
         container,
         state,
-        getPresetsCallback,
-        getTaxonomiesCallback,
-        onOpenPresetModalCallback,
+        getLibraryCallback,
+        onOpenEntryModalCallback,
         onOpenFavoriteModalCallback,
         onOpenTaxonomyManagerCallback,
-        onDeletePresetCallback,
-        onImportTriggerCallback
+        onDeleteEntryCallback,
+        onOpenImportModalCallback,
+        onOpenExportModalCallback
     ) {
         this.container = container;
         this.state = state;
-        this.getPresets = getPresetsCallback;
-        this.getTaxonomies = getTaxonomiesCallback;
-        this.onOpenPresetModal = onOpenPresetModalCallback;
+        this.getLibrary = getLibraryCallback;
+        this.onOpenEntryModal = onOpenEntryModalCallback;
         this.onOpenFavoriteModal = onOpenFavoriteModalCallback;
         this.onOpenTaxonomyManager = onOpenTaxonomyManagerCallback;
-        this.onDeletePreset = onDeletePresetCallback;
-        this.onImportTrigger = onImportTriggerCallback;
+        this.onDeleteEntry = onDeleteEntryCallback;
+        this.onOpenImportModal = onOpenImportModalCallback;
+        this.onOpenExportModal = onOpenExportModalCallback;
 
         this.filterCategory = "ALL";
-        this.filterFolder = "ALL";
+        this.filterCollection = "ALL";
         this.searchKeyword = "";
 
         this.initDOM();
@@ -114,8 +110,8 @@ export class LeftVaultComponent {
         newBtn.innerHTML = `${renderIcon("plus", 12)} <span>新建</span>`;
         newBtn.title = "录入新词条到本地预设库";
         newBtn.addEventListener("click", () => {
-            if (typeof this.onOpenPresetModal === "function") {
-                this.onOpenPresetModal(null);
+            if (typeof this.onOpenEntryModal === "function") {
+                this.onOpenEntryModal(null);
             }
         });
         btnGroup.appendChild(newBtn);
@@ -132,27 +128,29 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(manageTaxonomyBtn);
 
-        // 导入按钮：箭头朝下代表外部数据导入系统
+        // 导入按钮：唤起导入预检与冲突处理窗口
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
         importBtn.innerHTML = renderIcon("download", 13);
-        importBtn.title = "导入词库 JSON 包";
+        importBtn.title = "导入词库（带预检与冲突处理）";
         importBtn.addEventListener("click", () => {
-            if (typeof this.onImportTrigger === "function") {
-                this.onImportTrigger();
+            if (typeof this.onOpenImportModal === "function") {
+                this.onOpenImportModal();
             }
         });
         btnGroup.appendChild(importBtn);
 
-        // 导出按钮：箭头朝上代表内部数据导出备份
+        // 导出按钮：唤起导出预览弹窗
         const exportBtn = document.createElement("button");
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
         exportBtn.innerHTML = renderIcon("upload", 13);
-        exportBtn.title = "导出全量词库为 JSON 备份文件";
+        exportBtn.title = "导出全量词库（带预览统计）";
         exportBtn.addEventListener("click", () => {
-            triggerExportPresets();
+            if (typeof this.onOpenExportModal === "function") {
+                this.onOpenExportModal();
+            }
         });
         btnGroup.appendChild(exportBtn);
 
@@ -172,14 +170,14 @@ export class LeftVaultComponent {
         });
         filterRow.appendChild(this.categorySelect);
 
-        this.folderSelect = document.createElement("select");
-        this.folderSelect.className = "prompt-vault-select";
-        this.folderSelect.style.flex = "1 1 0";
-        this.folderSelect.addEventListener("change", () => {
-            this.filterFolder = this.folderSelect.value;
+        this.collectionSelect = document.createElement("select");
+        this.collectionSelect.className = "prompt-vault-select";
+        this.collectionSelect.style.flex = "1 1 0";
+        this.collectionSelect.addEventListener("change", () => {
+            this.filterCollection = this.collectionSelect.value;
             this.renderList();
         });
-        filterRow.appendChild(this.folderSelect);
+        filterRow.appendChild(this.collectionSelect);
 
         header.appendChild(filterRow);
 
@@ -216,68 +214,85 @@ export class LeftVaultComponent {
     }
 
     refreshDropdownOptions() {
-        const { categories, folders } = this.getTaxonomies();
+        const library = this.getLibrary();
+        const categories = library.categories || [];
+        const collections = library.collections || [];
 
         const catOptions = buildCategoryHierarchyOptions(categories);
         const curCat = this.filterCategory;
         this.categorySelect.innerHTML = "";
         catOptions.forEach((opt) => {
             const el = document.createElement("option");
-            el.value = opt.name;
+            el.value = opt.id;
             el.textContent = opt.label;
             this.categorySelect.appendChild(el);
         });
-        if (curCat && catOptions.some((o) => o.name === curCat)) {
+        if (curCat && catOptions.some((o) => o.id === curCat)) {
             this.categorySelect.value = curCat;
         } else {
             this.categorySelect.value = "ALL";
             this.filterCategory = "ALL";
         }
 
-        const curFld = this.filterFolder;
-        this.folderSelect.innerHTML = `
+        const curCol = this.filterCollection;
+        this.collectionSelect.innerHTML = `
       <option value="ALL">全部收藏夹</option>
       <option value="__UNFAVORITED__">未收藏</option>
     `;
-        folders.forEach((fld) => {
+        collections.forEach((col) => {
             const el = document.createElement("option");
-            el.value = fld.name;
-            el.textContent = fld.name;
-            this.folderSelect.appendChild(el);
+            el.value = col.name;
+            el.textContent = col.name;
+            this.collectionSelect.appendChild(el);
         });
-        if (curFld) {
-            this.folderSelect.value = curFld;
+        if (curCol) {
+            this.collectionSelect.value = curCol;
         } else {
-            this.folderSelect.value = "ALL";
-            this.filterFolder = "ALL";
+            this.collectionSelect.value = "ALL";
+            this.filterCollection = "ALL";
         }
     }
 
     renderList() {
         this.refreshDropdownOptions();
-        const presets = this.getPresets();
-        const { categories } = this.getTaxonomies();
-        const selectedPresetIds = new Set(
+        const library = this.getLibrary();
+        const entries = library.entries || [];
+        const categories = library.categories || [];
+        const tagsDict = library.tags || [];
+
+        const selectedEntryIds = new Set(
             this.state.selectedTiles.map((t) => t.ref_preset_id).filter(Boolean)
         );
 
-        const filtered = presets.filter((item) => {
-            if (this.filterCategory !== "ALL" && item.category !== this.filterCategory) {
-                return false;
+        const filtered = entries.filter((item) => {
+            if (this.filterCategory !== "ALL") {
+                if (item.categoryId !== this.filterCategory) {
+                    return false;
+                }
             }
 
-            if (this.filterFolder === "__UNFAVORITED__") {
-                if (item.favorite) return false;
-            } else if (this.filterFolder !== "ALL") {
-                if (!item.favorite || item.folder !== this.filterFolder) return false;
+            const hasCollection = Array.isArray(item.collections) && item.collections.length > 0;
+            if (this.filterCollection === "__UNFAVORITED__") {
+                if (hasCollection) return false;
+            } else if (this.filterCollection !== "ALL") {
+                if (!hasCollection || !item.collections.includes(this.filterCollection)) {
+                    return false;
+                }
             }
 
             if (this.searchKeyword) {
                 const titleMatch = (item.title || "").toLowerCase().includes(this.searchKeyword);
-                const promptMatch = (item.prompt || "").toLowerCase().includes(this.searchKeyword);
-                const tagMatch = (item.tags || []).some((t) => t.toLowerCase().includes(this.searchKeyword));
-                if (!titleMatch && !promptMatch && !tagMatch) return false;
+                const textMatch = (item.text || item.prompt || "").toLowerCase().includes(this.searchKeyword);
+
+                const itemTagIds = Array.isArray(item.tagIds) ? item.tagIds : [];
+                const tagMatch = itemTagIds.some((tid) => {
+                    const tObj = tagsDict.find((t) => t.id === tid);
+                    return tObj && tObj.name.toLowerCase().includes(this.searchKeyword);
+                });
+
+                if (!titleMatch && !textMatch && !tagMatch) return false;
             }
+
             return true;
         });
 
@@ -292,23 +307,24 @@ export class LeftVaultComponent {
         </div>
       `;
         } else {
-            filtered.forEach((preset) => {
-                const isAlreadyAdded = selectedPresetIds.has(preset.id);
+            filtered.forEach((entry) => {
+                const isAlreadyAdded = selectedEntryIds.has(entry.id);
                 const tileElement = createTileElement({
-                    data: preset,
+                    data: entry,
                     mode: "vault",
                     state: this.state,
                     isActive: false,
                     isAlreadyAdded: isAlreadyAdded,
-                    categoriesConfig: categories,
-                    onToggleFavorite: (targetPreset) => {
+                    categories: categories,
+                    tagsDict: tagsDict,
+                    onToggleFavorite: (targetEntry) => {
                         if (typeof this.onOpenFavoriteModal === "function") {
-                            this.onOpenFavoriteModal(targetPreset);
+                            this.onOpenFavoriteModal(targetEntry);
                         }
                     },
-                    onDeletePreset: (targetPreset) => {
-                        if (typeof this.onDeletePreset === "function") {
-                            this.onDeletePreset(targetPreset);
+                    onDeleteEntry: (targetEntry) => {
+                        if (typeof this.onDeleteEntry === "function") {
+                            this.onDeleteEntry(targetEntry);
                         }
                     },
                 });
@@ -316,6 +332,6 @@ export class LeftVaultComponent {
             });
         }
 
-        this.footer.textContent = `词库共 ${presets.length} 条 (展示 ${filtered.length} 条)`;
+        this.footer.textContent = `词库共 ${entries.length} 条 (展示 ${filtered.length} 条)`;
     }
 }

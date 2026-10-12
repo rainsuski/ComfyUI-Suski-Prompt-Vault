@@ -2,6 +2,7 @@
 """ComfyUI 自定义节点与提示词加权拼接引擎。
 
 定义 PromptVaultSelector 节点类，解析前端传递的磁贴序列并实现加权格式化与清洗。
+支持 prompt/text 双字段键兼容。
 """
 
 import json
@@ -17,11 +18,7 @@ class PromptVaultSelector:
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
-        """定义输入插槽规格。
-
-        selected_tiles_data 作为 required 输入接收前端序列化的磁贴数组，
-        配合前端隐藏 Widget 实现安全持久化与参数传递。
-        """
+        """定义输入插槽规格。"""
         return {
             "required": {
                 "selected_tiles_data": (
@@ -70,15 +67,6 @@ class PromptVaultSelector:
             - weight == 1.0: 保持原始内容，不添加外层包裹。
             - weight != 1.0: 格式化为 (prompt:weight)。
             - 忽略所有处于静音 (enabled == false) 状态的磁贴。
-
-        Args:
-            selected_tiles_data: 序列化已选磁贴列表 JSON 字符串。
-            prepend_prompt: 前置可选提示词。
-            append_prompt: 后置可选提示词。
-            **kwargs: 扩展兼容参数。
-
-        Returns:
-            Tuple[str]: 输出拼接后的最终提示词。
         """
         tiles: List[Dict[str, Any]] = []
         try:
@@ -91,11 +79,11 @@ class PromptVaultSelector:
 
         segments: List[str] = []
 
-        # 1. 前置提示词处理
+        # 1. 前置提示词
         if prepend_prompt and prepend_prompt.strip():
             segments.append(prepend_prompt.strip())
 
-        # 2. 已选磁贴加权拼接处理
+        # 2. 磁贴序列加权处理
         for tile in tiles:
             if not isinstance(tile, dict):
                 continue
@@ -104,7 +92,8 @@ class PromptVaultSelector:
             if not enabled:
                 continue
 
-            prompt_content = tile.get("prompt", "").strip()
+            # 支持 text (标准字段) 与 prompt 字段
+            prompt_content = (tile.get("text") or tile.get("prompt") or "").strip()
             if not prompt_content:
                 continue
 
@@ -113,7 +102,6 @@ class PromptVaultSelector:
             except (ValueError, TypeError):
                 weight = 1.0
 
-            # 权重接近 1.0 时直接输出，否则使用标准权重包裹语法
             if abs(weight - 1.0) < 0.001:
                 formatted_segment = prompt_content
             else:
@@ -122,14 +110,12 @@ class PromptVaultSelector:
 
             segments.append(formatted_segment)
 
-        # 3. 后置提示词处理
+        # 3. 后置提示词
         if append_prompt and append_prompt.strip():
             segments.append(append_prompt.strip())
 
-        # 4. 连接与规范化逗号清洗
+        # 4. 规范化逗号清洗
         raw_combined = ", ".join(segments)
-
-        # 清除多重连续逗号与冗余空格
         cleaned_prompt = re.sub(r",\s*,+", ", ", raw_combined)
         cleaned_prompt = re.sub(r"\s+", " ", cleaned_prompt).strip()
         cleaned_prompt = cleaned_prompt.strip(",").strip()
