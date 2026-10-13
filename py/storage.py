@@ -2,8 +2,9 @@
 """数据持久化与安全读写存储模块。
 
 基于 aaalice-prompt-library v2 标准数据模型实现统一单文件管理，
-提供线程安全的原子写入、分类树与子级级联/提升、标签映射、
-组合模板组员持久化及词条 CRUD 操作。
+将词条 entries 与关系型提示词组 groups 彻底物理分离。
+提供线程安全的原子写入、分类树级联、标签映射、
+词条删除对组合 entryIds 的自动级联清理以及全量 CRUD 操作。
 """
 
 import json
@@ -31,6 +32,7 @@ class StorageManager:
         """从磁盘安全读取完整词库 JSON 对象，若结构缺失则安全初始化。"""
         if not LIBRARY_FILE.exists():
             default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+            default_copy.setdefault("groups", [])
             self._write_atomic(default_copy)
             return default_copy
         try:
@@ -43,14 +45,17 @@ class StorageManager:
                     data.setdefault("collections", [])
                     data.setdefault("tags", [])
                     data.setdefault("entries", [])
+                    data.setdefault("groups", [])
                     data.setdefault("selection", {"entryIds": []})
                     return data
                 default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+                default_copy.setdefault("groups", [])
                 self._write_atomic(default_copy)
                 return default_copy
         except (json.JSONDecodeError, OSError) as err:
             logger.error("Failed to read library.json: %s", str(err))
             default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+            default_copy.setdefault("groups", [])
             self._write_atomic(default_copy)
             return default_copy
 
@@ -85,7 +90,7 @@ class StorageManager:
     def upsert_entry(
         self, entry_payload: Dict[str, Any]
     ) -> Tuple[bool, Dict[str, Any]]:
-        """新增或更新提示词条目，支持单项词条与组合模板成员持久化。"""
+        """新增或更新提示词条目，保证词条存储纯净度。"""
         with self._lock:
             lib = self._read_library()
             entries: List[Dict[str, Any]] = lib.setdefault("entries", [])
@@ -126,22 +131,6 @@ class StorageManager:
                 "collections": entry_payload.get("collections") or [],
             }
 
-            raw_members = entry_payload.get("groupMembers") or entry_payload.get(
-                "members"
-            )
-            if isinstance(raw_members, list) and len(raw_members) > 0:
-                clean_members = []
-                for m in raw_members:
-                    if isinstance(m, dict):
-                        clean_members.append(
-                            {
-                                "title": m.get("title") or "组员",
-                                "text": m.get("text") or m.get("prompt") or "",
-                            }
-                        )
-                if clean_members:
-                    entry_item["groupMembers"] = clean_members
-
             found = False
             for idx, existing in enumerate(entries):
                 if existing.get("id") == target_id:
@@ -156,7 +145,7 @@ class StorageManager:
             return success, entry_item
 
     def delete_entry(self, entry_id: str) -> bool:
-        """删除指定词条。"""
+        """删除指定词条，并自动从所有提示词组中移除其引用（静默保留空组）。"""
         with self._lock:
             lib = self._read_library()
             entries = lib.get("entries", [])
@@ -169,6 +158,66 @@ class StorageManager:
                 self.delete_thumbnail_file(preview_hash)
 
             lib["entries"] = [e for e in entries if e.get("id") != entry_id]
+
+            # 级联更新所有 groups，移除已删词条 ID
+            groups = lib.get("groups", [])
+            for grp in groups:
+                raw_eids = grp.get("entryIds") or []
+                if entry_id in raw_eids:
+                    grp["entryIds"] = [eid for eid in raw_eids if eid != entry_id]
+
+            return self._write_atomic(lib)
+
+    def upsert_group(
+        self, group_payload: Dict[str, Any]
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """新增或更新提示词组关系实体。"""
+        with self._lock:
+            lib = self._read_library()
+            groups: List[Dict[str, Any]] = lib.setdefault("groups", [])
+            target_id = group_payload.get("id") or str(uuid.uuid4())
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+            raw_entry_ids = (
+                group_payload.get("entryIds") or group_payload.get("entry_ids") or []
+            )
+            clean_entry_ids = [str(eid) for eid in raw_entry_ids if eid]
+
+            group_item: Dict[str, Any] = {
+                "id": target_id,
+                "title": (group_payload.get("title") or "未命名组合").strip(),
+                "categoryId": group_payload.get("categoryId")
+                or group_payload.get("category_id")
+                or None,
+                "entryIds": clean_entry_ids,
+                "note": group_payload.get("note") or "",
+                "position": group_payload.get("position", len(groups)),
+                "updatedAt": now_str,
+            }
+
+            found = False
+            for idx, existing in enumerate(groups):
+                if existing.get("id") == target_id:
+                    groups[idx] = {**existing, **group_item}
+                    found = True
+                    break
+
+            if not found:
+                groups.insert(0, group_item)
+
+            success = self._write_atomic(lib)
+            return success, group_item
+
+    def delete_group(self, group_id: str) -> bool:
+        """删除指定提示词组关系实体，不影响底层 entries。"""
+        with self._lock:
+            lib = self._read_library()
+            groups = lib.get("groups", [])
+            target = next((g for g in groups if g.get("id") == group_id), None)
+            if not target:
+                return False
+
+            lib["groups"] = [g for g in groups if g.get("id") != group_id]
             return self._write_atomic(lib)
 
     def upsert_category(
@@ -204,7 +253,7 @@ class StorageManager:
             return success, cat_item
 
     def delete_category(self, cat_id: str, delete_branch: bool = False) -> bool:
-        """删除指定分类。"""
+        """删除指定分类，并级联解绑词条与词组所属分类。"""
         with self._lock:
             lib = self._read_library()
             categories: List[Dict[str, Any]] = lib.get("categories", [])
@@ -213,6 +262,7 @@ class StorageManager:
                 return False
 
             entries: List[Dict[str, Any]] = lib.get("entries", [])
+            groups: List[Dict[str, Any]] = lib.get("groups", [])
 
             if delete_branch:
                 ids_to_del = {cat_id}
@@ -233,6 +283,9 @@ class StorageManager:
                 for e in entries:
                     if e.get("categoryId") in ids_to_del:
                         e["categoryId"] = None
+                for g in groups:
+                    if g.get("categoryId") in ids_to_del:
+                        g["categoryId"] = None
             else:
                 p_id = target.get("parentId")
                 for c in categories:
@@ -243,6 +296,9 @@ class StorageManager:
                 for e in entries:
                     if e.get("categoryId") == cat_id:
                         e["categoryId"] = None
+                for g in groups:
+                    if g.get("categoryId") == cat_id:
+                        g["categoryId"] = None
 
             return self._write_atomic(lib)
 
@@ -300,6 +356,7 @@ class StorageManager:
             imported_data.setdefault("collections", [])
             imported_data.setdefault("tags", [])
             imported_data.setdefault("entries", [])
+            imported_data.setdefault("groups", [])
             imported_data.setdefault("selection", {"entryIds": []})
 
             if mode == "overwrite":
@@ -327,6 +384,11 @@ class StorageManager:
             for e in imported_data.get("entries", []):
                 ent_map[e["id"]] = e
             cur["entries"] = list(ent_map.values())
+
+            grp_map = {g["id"]: g for g in cur.get("groups", [])}
+            for g in imported_data.get("groups", []):
+                grp_map[g["id"]] = g
+            cur["groups"] = list(grp_map.values())
 
             success = self._write_atomic(cur)
             return success, len(cur["entries"])

@@ -2,9 +2,10 @@
 
 /**
  * 磁贴卡片（Tile）核心渲染组件。
- * 对齐 aaalice-prompt-library v2 数据标准，
- * 支持单轨几何树状连线、微光锚点转角、Shift 多选防焦点切换、
- * 批量拖拽打包、组员常态呼吸圆点、词库组合模板徽章、词库点击整组反选与延时悬浮详情预览。
+ * 遵循归一化模型：普通词条与组员使用相同的数据渲染标准。
+ * 支持单体视图微型组关联徽标与多组跳转菜单、手风琴二级磁贴轻量交互、
+ * 运行态单轨几何树状连线、微光锚点转角贴合卡片、连线悬停 160ms 防抖防闪烁、
+ * 鼠标悬停时右侧浮现圆角胶囊操作条、100% 纯净矢量 SVG 图标（零 Emoji）。
  */
 
 import { getThumbnailUrl } from "../api.js";
@@ -14,6 +15,8 @@ import { formatWeightBadgeText } from "../utils/prompt_format.js";
 
 let activePopoverElement = null;
 let activePopoverTimer = null;
+let activeJumpMenuElement = null;
+let hoverGroupTimeout = null;
 
 function removeActivePopover() {
     if (activePopoverTimer) {
@@ -25,6 +28,19 @@ function removeActivePopover() {
     }
     activePopoverElement = null;
 }
+
+function removeActiveJumpMenu() {
+    if (activeJumpMenuElement && activeJumpMenuElement.parentNode) {
+        activeJumpMenuElement.parentNode.removeChild(activeJumpMenuElement);
+    }
+    activeJumpMenuElement = null;
+}
+
+document.addEventListener("click", (e) => {
+    if (activeJumpMenuElement && !activeJumpMenuElement.contains(e.target)) {
+        removeActiveJumpMenu();
+    }
+});
 
 function showPopover(targetTile, data, categories, tagsDict) {
     removeActivePopover();
@@ -40,30 +56,19 @@ function showPopover(targetTile, data, categories, tagsDict) {
     title.textContent = data.title || "未命名词条";
     header.appendChild(title);
 
-    const isGroup = (Array.isArray(data.groupMembers) && data.groupMembers.length > 0) ||
-        (Array.isArray(data.members) && data.members.length > 0);
-
-    if (isGroup) {
-        const groupBadge = document.createElement("span");
-        groupBadge.className = "prompt-vault-tile-group-badge";
-        const memberCount = (data.groupMembers || data.members).length;
-        groupBadge.textContent = `组合模板 (${memberCount} 项)`;
-        header.appendChild(groupBadge);
-    } else {
-        const matchedCat = categories.find(
-            (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
-        );
-        if (matchedCat) {
-            const badge = document.createElement("span");
-            badge.className = "prompt-vault-tile-badge";
-            badge.textContent = matchedCat.name;
-            if (matchedCat.color) {
-                badge.style.backgroundColor = `${matchedCat.color}22`;
-                badge.style.color = matchedCat.color;
-                badge.style.borderColor = `${matchedCat.color}44`;
-            }
-            header.appendChild(badge);
+    const matchedCat = categories.find(
+        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+    );
+    if (matchedCat) {
+        const badge = document.createElement("span");
+        badge.className = "prompt-vault-tile-badge";
+        badge.textContent = matchedCat.name;
+        if (matchedCat.color) {
+            badge.style.backgroundColor = `${matchedCat.color}22`;
+            badge.style.color = matchedCat.color;
+            badge.style.borderColor = `${matchedCat.color}44`;
         }
+        header.appendChild(badge);
     }
     popover.appendChild(header);
 
@@ -78,30 +83,17 @@ function showPopover(targetTile, data, categories, tagsDict) {
         popover.appendChild(previewBox);
     }
 
-    if (isGroup) {
-        const memberLabel = document.createElement("div");
-        memberLabel.className = "prompt-vault-popover-section-label";
-        memberLabel.textContent = "包含组员定义";
-        popover.appendChild(memberLabel);
+    const promptContent = data.text || data.prompt || "";
+    if (promptContent) {
+        const promptLabel = document.createElement("div");
+        promptLabel.className = "prompt-vault-popover-section-label";
+        promptLabel.textContent = "提示词";
+        popover.appendChild(promptLabel);
 
-        const listContainer = document.createElement("div");
-        listContainer.className = "prompt-vault-popover-prompt";
-        const members = data.groupMembers || data.members;
-        listContainer.textContent = members.map((m, i) => `${i + 1}. [${m.title}] ${m.text || m.prompt}`).join("\n");
-        popover.appendChild(listContainer);
-    } else {
-        const promptContent = data.text || data.prompt || "";
-        if (promptContent) {
-            const promptLabel = document.createElement("div");
-            promptLabel.className = "prompt-vault-popover-section-label";
-            promptLabel.textContent = "提示词";
-            popover.appendChild(promptLabel);
-
-            const promptText = document.createElement("div");
-            promptText.className = "prompt-vault-popover-prompt";
-            promptText.textContent = promptContent;
-            popover.appendChild(promptText);
-        }
+        const promptText = document.createElement("div");
+        promptText.className = "prompt-vault-popover-prompt";
+        promptText.textContent = promptContent;
+        popover.appendChild(promptText);
     }
 
     const tagIds = Array.isArray(data.tagIds) ? data.tagIds : [];
@@ -150,6 +142,43 @@ function showPopover(targetTile, data, categories, tagsDict) {
 
     popover.style.left = `${left}px`;
     popover.style.top = `${top}px`;
+}
+
+function showJumpMenu(triggerEl, groups, onJumpToGroup) {
+    removeActiveJumpMenu();
+
+    const menu = document.createElement("div");
+    menu.className = "prompt-vault-jump-menu";
+    isolateCanvasEvents(menu);
+
+    const header = document.createElement("div");
+    header.className = "prompt-vault-jump-menu-title";
+    header.textContent = "跳转至所属提示词组";
+    menu.appendChild(header);
+
+    groups.forEach((g) => {
+        const item = document.createElement("div");
+        item.className = "prompt-vault-jump-menu-item";
+        item.innerHTML = `
+          ${renderIcon("folder", 12)}
+          <span class="pv-jump-name">${g.title || "未命名组合"}</span>
+        `;
+        item.addEventListener("click", (e) => {
+            e.stopPropagation();
+            removeActiveJumpMenu();
+            if (typeof onJumpToGroup === "function") {
+                onJumpToGroup(g.id);
+            }
+        });
+        menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+    activeJumpMenuElement = menu;
+
+    const rect = triggerEl.getBoundingClientRect();
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
 }
 
 function createTrackElement(trackRole) {
@@ -212,8 +241,10 @@ export function createTileElement({
     isMultiSelected = false,
     categories = [],
     tagsDict = [],
+    belongingGroups = [],
     onToggleFavorite,
     onDeleteEntry,
+    onJumpToGroup,
     trackRole = "none",
     groupColor = null,
     isGroupActiveMember = false,
@@ -223,11 +254,6 @@ export function createTileElement({
     const isMuted = isSelectedMode && data.enabled === false;
     const isDirty = isSelectedMode && Boolean(data.is_dirty);
     const hasGroup = Boolean(data.group_id);
-
-    const isVaultGroupTemplate = !isSelectedMode && (
-        (Array.isArray(data.groupMembers) && data.groupMembers.length > 0) ||
-        (Array.isArray(data.members) && data.members.length > 0)
-    );
 
     const tile = document.createElement("div");
     tile.className = "prompt-vault-tile";
@@ -242,7 +268,13 @@ export function createTileElement({
 
     isolateCanvasEvents(tile);
 
+    // 鼠标移入：取消移出防抖定时器，立即亮起当前组合连线
     tile.addEventListener("mouseenter", () => {
+        if (hoverGroupTimeout) {
+            clearTimeout(hoverGroupTimeout);
+            hoverGroupTimeout = null;
+        }
+
         if (isSelectedMode && data.group_id) {
             state.setHoveredGroupId(data.group_id);
         }
@@ -252,9 +284,14 @@ export function createTileElement({
         }, 450);
     });
 
+    // 鼠标移出：160ms 延迟消除，避免在磁贴行间缝隙划过时产生闪烁
     tile.addEventListener("mouseleave", () => {
         if (isSelectedMode && data.group_id) {
-            state.setHoveredGroupId(null);
+            if (hoverGroupTimeout) clearTimeout(hoverGroupTimeout);
+            hoverGroupTimeout = setTimeout(() => {
+                state.setHoveredGroupId(null);
+                hoverGroupTimeout = null;
+            }, 160);
         }
         removeActivePopover();
     });
@@ -262,6 +299,7 @@ export function createTileElement({
     tile.addEventListener("click", (event) => {
         removeActivePopover();
         if (event.target.closest(".prompt-vault-tile-actions")) return;
+        if (event.target.closest(".prompt-vault-group-indicator")) return;
 
         if (isSelectedMode) {
             if (event.shiftKey) {
@@ -270,22 +308,12 @@ export function createTileElement({
                 state.setActiveTile(instanceId);
             }
         } else {
-            if (isVaultGroupTemplate) {
-                const existingGroupMember = state.selectedTiles.find(
-                    (t) => t.ref_preset_id === data.id
-                );
-                if (existingGroupMember) {
-                    state.removeGroupByPresetId(data.id);
-                } else {
-                    state.addGroupFromEntry(data, categories);
-                }
+            // 词库模式：纯粹点击添加，再次点击取消添加
+            const existing = state.selectedTiles.find((t) => t.ref_preset_id === data.id);
+            if (existing) {
+                state.removeTile(existing.instance_id);
             } else {
-                const existing = state.selectedTiles.find((t) => t.ref_preset_id === data.id);
-                if (existing) {
-                    state.removeTile(existing.instance_id);
-                } else {
-                    state.addTileFromEntry(data, categories);
-                }
+                state.addTileFromEntry(data, categories);
             }
         }
     });
@@ -328,27 +356,42 @@ export function createTileElement({
     titleText.title = data.title || "";
     titleRow.appendChild(titleText);
 
-    if (isVaultGroupTemplate) {
-        const groupBadge = document.createElement("span");
-        groupBadge.className = "prompt-vault-tile-group-badge";
-        const count = (data.groupMembers || data.members).length;
-        groupBadge.textContent = `组合 (${count})`;
-        titleRow.appendChild(groupBadge);
-    } else {
-        const matchedCat = categories.find(
-            (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
-        );
-        if (matchedCat) {
-            const catBadge = document.createElement("span");
-            catBadge.className = "prompt-vault-tile-badge";
-            catBadge.textContent = matchedCat.name;
-            if (matchedCat.color) {
-                catBadge.style.backgroundColor = `${matchedCat.color}22`;
-                catBadge.style.color = matchedCat.color;
-                catBadge.style.borderColor = `${matchedCat.color}44`;
+    // 单体视图：极简微型跳转标记
+    if (!isSelectedMode && Array.isArray(belongingGroups) && belongingGroups.length > 0) {
+        const indicator = document.createElement("span");
+        indicator.className = "prompt-vault-group-indicator";
+        indicator.innerHTML = renderIcon("link", 11);
+        indicator.title = belongingGroups.length === 1
+            ? `所属组合：${belongingGroups[0].title} (点击跳转)`
+            : `属于 ${belongingGroups.length} 个组合 (点击选择跳转)`;
+
+        indicator.addEventListener("click", (e) => {
+            e.stopPropagation();
+            removeActivePopover();
+            if (belongingGroups.length === 1) {
+                if (typeof onJumpToGroup === "function") {
+                    onJumpToGroup(belongingGroups[0].id);
+                }
+            } else {
+                showJumpMenu(indicator, belongingGroups, onJumpToGroup);
             }
-            titleRow.appendChild(catBadge);
+        });
+        titleRow.appendChild(indicator);
+    }
+
+    const matchedCat = categories.find(
+        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+    );
+    if (matchedCat) {
+        const catBadge = document.createElement("span");
+        catBadge.className = "prompt-vault-tile-badge";
+        catBadge.textContent = matchedCat.name;
+        if (matchedCat.color) {
+            catBadge.style.backgroundColor = `${matchedCat.color}22`;
+            catBadge.style.color = matchedCat.color;
+            catBadge.style.borderColor = `${matchedCat.color}44`;
         }
+        titleRow.appendChild(catBadge);
     }
 
     if (isDirty) {
@@ -361,17 +404,12 @@ export function createTileElement({
 
     const snippet = document.createElement("div");
     snippet.className = "prompt-vault-tile-snippet";
-    let promptSnippetText = "";
-    if (isVaultGroupTemplate) {
-        const members = data.groupMembers || data.members;
-        promptSnippetText = members.map((m) => m.title).join(" / ");
-    } else {
-        promptSnippetText = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
-    }
+    const promptSnippetText = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
     snippet.textContent = promptSnippetText;
     infoBox.appendChild(snippet);
     tile.appendChild(infoBox);
 
+    // 悬浮胶囊动作条：悬停时呈现半透明圆角药丸浮层
     const actionsBar = document.createElement("div");
     actionsBar.className = "prompt-vault-tile-actions";
 
@@ -431,9 +469,7 @@ export function createTileElement({
     copyBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
-            const copyContent = isVaultGroupTemplate
-                ? (data.groupMembers || data.members).map((m) => m.text || m.prompt || "").join(", ")
-                : (data.text || data.prompt || "");
+            const copyContent = data.text || data.prompt || "";
             await navigator.clipboard.writeText(copyContent);
             copyBtn.innerHTML = renderIcon("check", 13);
             setTimeout(() => {

@@ -1,223 +1,183 @@
 /* File: ComfyUI-Suski-Prompt-Vault/web/css/tile.css */
 
-/**
- * 磁贴卡片设计、单轨几何树状连线、微光主题着色系统、
- * 中栏批量操作悬浮条、多选高亮微光、只读滚轮权重交互与详情预览气泡样式。
- */
-
-/* ========================================================
-   中栏磁贴外层包裹行与单轨几何连线系统 (Gutter Track)
-   ======================================================== */
+/* ==========================================================================
+   磁贴通用与单轨树状连线、微型关联标、手风琴二级展开、悬浮胶囊动作条样式体系
+   ========================================================================== */
 
 .prompt-vault-tile-row {
     position: relative;
     display: flex;
     align-items: stretch;
+    flex: 0 0 auto;
+    gap: 0;
     width: 100%;
-    margin-bottom: 6px;
-    box-sizing: border-box;
+    margin-bottom: 3px;
+    user-select: none;
+    --pv-group-color: #10b981;
+    --pv-group-glow: rgba(16, 185, 129, 0.35);
 }
 
-.prompt-vault-tile-row:last-child {
-    margin-bottom: 0;
-}
-
-/* 左侧单轨连线几何容器：固定 18px 空间，紧密衔接卡片 */
+/* 轨道宽度收窄至 14px，保留恒定宽度防抖 */
 .prompt-vault-tile-track {
     position: relative;
-    width: 18px;
-    flex-shrink: 0;
-    pointer-events: none;
-    box-sizing: border-box;
+    width: 12px;
+    flex: 0 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-/* 轨道内的几何矢量线段基础图元 */
-.prompt-vault-track-v-top,
-.prompt-vault-track-v-bottom,
+/* 纵线限定在行高区间内，行与行自然留出 3px 断续科技感间隙 */
 .prompt-vault-track-v-full {
     position: absolute;
-    left: 8px;
+    top: -2px;
+    bottom: -2px;
+    left: 4px;
     width: 2px;
-    background-color: var(--pv-group-color, #10b981);
-    box-shadow: 0 0 5px var(--pv-group-glow, rgba(16, 185, 129, 0.45));
+    background-color: var(--pv-group-color);
+    box-shadow: 0 0 5px var(--pv-group-glow);
     border-radius: 1px;
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.prompt-vault-track-v-top {
-    top: -4px;
-    height: calc(50% + 4px);
 }
 
 .prompt-vault-track-v-bottom {
+    position: absolute;
     top: 50%;
-    bottom: -4px;
+    bottom: -2px;
+    left: 4px;
+    width: 2px;
+    background-color: var(--pv-group-color);
+    box-shadow: 0 0 5px var(--pv-group-glow);
+    border-radius: 1px;
 }
 
-.prompt-vault-track-v-full {
-    top: -4px;
-    bottom: -4px;
+.prompt-vault-track-v-top {
+    position: absolute;
+    top: -2px;
+    bottom: 50%;
+    left: 4px;
+    width: 2px;
+    background-color: var(--pv-group-color);
+    box-shadow: 0 0 5px var(--pv-group-glow);
+    border-radius: 1px;
 }
 
 .prompt-vault-track-h-branch {
     position: absolute;
-    left: 8px;
     top: calc(50% - 1px);
+    left: 4px;
     right: 0;
     height: 2px;
-    background-color: var(--pv-group-color, #10b981);
-    box-shadow: 0 0 5px var(--pv-group-glow, rgba(16, 185, 129, 0.45));
-    border-radius: 1px;
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+    background-color: var(--pv-group-color);
+    box-shadow: 0 0 5px var(--pv-group-glow);
 }
 
+/* 光球紧贴在磁贴左边框上 */
 .prompt-vault-track-dot-anchor {
     position: absolute;
-    right: -2px;
     top: calc(50% - 3px);
+    right: -3px;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background-color: #ffffff;
-    box-shadow: 0 0 6px var(--pv-group-color, #10b981);
-    z-index: 2;
+    border: 1px solid var(--pv-group-color);
+    box-shadow: 0 0 5px #ffffff, 0 0 8px var(--pv-group-color);
+    z-index: 3;
 }
 
 .prompt-vault-track-pass .prompt-vault-track-v-full {
-    opacity: 0.38;
-    box-shadow: none;
+    opacity: 0.45;
 }
 
-/* ========================================================
-   中栏多选批量操作条 (Batch Action Bar)
-   ======================================================== */
-
-.prompt-vault-batch-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 10px;
-    margin-bottom: 8px;
-    background: rgba(30, 41, 59, 0.85);
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    border-radius: var(--pv-radius-md);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-    animation: promptVaultSlideDown 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-    box-sizing: border-box;
-}
-
-@keyframes promptVaultSlideDown {
-    from {
-        opacity: 0;
-        transform: translateY(-6px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.prompt-vault-batch-bar-left {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #38bdf8;
-}
-
-.prompt-vault-batch-bar-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-/* ========================================================
-   磁贴卡片主体样式与多选状态
-   ======================================================== */
-
+/* 磁贴卡片（默认自适应内容高度，防止在纵向 Flex 视口中发生垂直拉伸） */
 .prompt-vault-tile {
-    position: relative;
+    flex: 0 0 auto;
+    width: 100%;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    flex: 1 1 0;
-    min-width: 0;
-    background-color: var(--pv-bg-card);
+    background: var(--pv-bg-surface);
     border: 1px solid var(--pv-border-subtle);
     border-radius: var(--pv-radius-md);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-    user-select: none;
-    overflow: hidden;
+    padding: 6px 10px;
+    gap: 10px;
+    min-height: 48px;
     box-sizing: border-box;
-    min-height: 54px;
+    cursor: pointer;
+    transition: all 0.16s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+/* 当磁贴作为单轨连线行容器子项时，横向填满行内剩余宽度 */
+.prompt-vault-tile-row .prompt-vault-tile {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
 }
 
 .prompt-vault-tile:hover {
-    background-color: var(--pv-bg-card-hover);
+    background: var(--pv-bg-hover, rgba(255, 255, 255, 0.04));
     border-color: var(--pv-border-strong);
-}
-
-.prompt-vault-tile.is-vault-selected {
-    border-color: var(--pv-accent-primary);
-    box-shadow: 0 0 0 1px var(--pv-accent-primary), 0 2px 8px rgba(59, 130, 246, 0.25);
-    background-color: var(--pv-bg-card-active);
+    transform: translateY(-1px);
 }
 
 .prompt-vault-tile.is-active {
     border-color: var(--pv-accent-primary);
-    box-shadow: 0 0 0 1px var(--pv-accent-primary);
-    background-color: var(--pv-bg-card-active);
+    background: rgba(59, 130, 246, 0.12);
+    box-shadow: 0 0 0 1px var(--pv-accent-primary), 0 2px 8px rgba(59, 130, 246, 0.25);
 }
 
-/* 多选选中视觉状态：亮天蓝微光与轻微半透底色 */
-.prompt-vault-tile.is-multi-selected {
-    border-color: #38bdf8 !important;
-    box-shadow: 0 0 0 1px #38bdf8, 0 2px 10px rgba(56, 189, 248, 0.25) !important;
-    background-color: rgba(56, 189, 248, 0.08) !important;
+.prompt-vault-tile.is-vault-selected {
+    border-color: var(--pv-accent-primary);
+    background: rgba(59, 130, 246, 0.08);
 }
 
-/* 处于当前聚焦组合中的卡片微光高亮 */
+.prompt-vault-tile.is-vault-selected::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--pv-accent-primary);
+}
+
 .prompt-vault-tile.is-group-active-member {
-    border-color: var(--pv-group-color, #10b981);
-    box-shadow: 0 0 0 1px var(--pv-group-color, #10b981), 0 2px 10px var(--pv-group-glow, rgba(16, 185, 129, 0.2));
+    border-color: var(--pv-group-color) !important;
+    box-shadow: 0 0 8px var(--pv-group-glow);
+}
+
+.prompt-vault-tile.is-multi-selected {
+    background: rgba(168, 85, 247, 0.14) !important;
+    border-color: #a855f7 !important;
 }
 
 .prompt-vault-tile.is-muted {
-    opacity: 0.42;
-    filter: grayscale(0.7);
+    opacity: 0.55;
+    filter: grayscale(0.6);
 }
 
-.prompt-vault-tile-group-dot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    margin-right: 2px;
-    flex-shrink: 0;
-    box-shadow: 0 0 5px currentColor;
-    transition: transform 0.15s ease;
+/* 拖动定位高亮边框线 */
+.prompt-vault-tile-row.drag-over-top .prompt-vault-tile {
+    border-top-color: var(--pv-accent-primary) !important;
+    box-shadow: inset 0 2px 0 0 var(--pv-accent-primary), 0 -2px 10px rgba(59, 130, 246, 0.6) !important;
 }
 
-.prompt-vault-tile:hover .prompt-vault-tile-group-dot {
-    transform: scale(1.25);
+.prompt-vault-tile-row.drag-over-bottom .prompt-vault-tile {
+    border-bottom-color: var(--pv-accent-primary) !important;
+    box-shadow: inset 0 -2px 0 0 var(--pv-accent-primary), 0 2px 10px rgba(59, 130, 246, 0.6) !important;
 }
 
 .prompt-vault-tile-thumb {
     width: 36px;
     height: 36px;
     border-radius: var(--pv-radius-sm);
-    background-color: var(--pv-bg-input);
+    background: var(--pv-bg-card, rgba(36, 38, 48, 0.85));
     border: 1px solid var(--pv-border-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
+    flex: 0 0 36px;
     overflow: hidden;
     color: var(--pv-text-muted);
 }
@@ -226,16 +186,15 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    display: block;
 }
 
 .prompt-vault-tile-info {
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 2px;
-    flex: 1 1 0;
-    min-width: 0;
+    gap: 3px;
 }
 
 .prompt-vault-tile-title-row {
@@ -246,268 +205,317 @@
 }
 
 .prompt-vault-tile-title {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
     color: var(--pv-text-primary);
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex-shrink: 1;
+    white-space: nowrap;
+}
+
+.prompt-vault-tile-group-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: 0 0 6px;
+    box-shadow: 0 0 5px currentColor;
+}
+
+/* 单体视图微型组跳转标记 */
+.prompt-vault-group-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    color: var(--pv-accent-primary);
+    background: rgba(59, 130, 246, 0.16);
+    cursor: pointer;
+    flex: 0 0 16px;
+    transition: all 0.15s ease;
+}
+
+.prompt-vault-group-indicator:hover {
+    background: var(--pv-accent-primary);
+    color: #ffffff;
+    transform: scale(1.1);
 }
 
 .prompt-vault-tile-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: var(--pv-radius-pill);
     font-size: 10px;
-    font-weight: 500;
-    background-color: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.25);
-    flex-shrink: 0;
-}
-
-.prompt-vault-tile-group-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
     padding: 1px 6px;
-    border-radius: var(--pv-radius-pill);
-    font-size: 10px;
-    font-weight: 600;
-    background-color: rgba(16, 185, 129, 0.15);
-    color: #10b981;
-    border: 1px solid rgba(16, 185, 129, 0.35);
-    flex-shrink: 0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--pv-text-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    white-space: nowrap;
 }
 
 .prompt-vault-tile-dirty-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 4px;
-    border-radius: var(--pv-radius-sm);
-    font-size: 9px;
-    font-weight: 600;
-    background-color: rgba(245, 158, 11, 0.18);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    flex-shrink: 0;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(245, 158, 11, 0.18);
+    color: var(--pv-accent-warning);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    white-space: nowrap;
 }
 
 .prompt-vault-tile-snippet {
     font-size: 11px;
-    font-family: var(--pv-font-mono);
     color: var(--pv-text-muted);
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    line-height: 1.3;
+    white-space: nowrap;
 }
 
+/* 磁贴右侧胶囊球：常态隐藏，悬停时浮出 */
 .prompt-vault-tile-actions {
     position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%) translateX(6px);
+    right: 8px;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 6px;
-    background-color: var(--pv-bg-surface);
-    border: 1px solid var(--pv-border-strong);
+    gap: 3px;
+    padding: 2px 6px;
     border-radius: var(--pv-radius-pill);
-    box-shadow: var(--pv-shadow-floating);
+    background: rgba(18, 19, 25, 0.94);
+    border: 1px solid var(--pv-border-strong);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    z-index: 5;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.16s ease, transform 0.16s ease;
-    z-index: 10;
-    backdrop-filter: blur(8px);
+    transform: translateX(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .prompt-vault-tile:hover .prompt-vault-tile-actions {
     opacity: 1;
     pointer-events: auto;
-    transform: translateY(-50%) translateX(0);
+    transform: translateX(0);
 }
 
 .prompt-vault-tile-btn {
-    display: inline-flex;
+    background: transparent;
+    border: none;
+    color: var(--pv-text-muted);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 50%;
-    color: var(--pv-text-secondary);
-    font-size: 12px;
     cursor: pointer;
-    transition: all 0.12s ease;
-    flex-shrink: 0;
+    padding: 0;
+    transition: all 0.14s ease;
 }
 
 .prompt-vault-tile-btn:hover {
-    background-color: var(--pv-bg-card-hover);
+    background: rgba(255, 255, 255, 0.1);
     color: var(--pv-text-primary);
-    border-color: var(--pv-border-subtle);
 }
 
 .prompt-vault-tile-btn.is-starred {
-    color: #f59e0b;
+    color: #eab308;
 }
 
 .prompt-vault-tile-btn.is-danger:hover {
-    background-color: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--pv-accent-danger);
+    background: rgba(239, 68, 68, 0.18);
 }
 
 .prompt-vault-tile-weight {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 38px;
-    height: 22px;
-    padding: 0 6px;
-    box-sizing: border-box;
-    background-color: var(--pv-bg-input);
-    border: 1px solid var(--pv-border-subtle);
-    border-radius: var(--pv-radius-pill);
-    color: #93c5fd;
-    font-family: var(--pv-font-mono);
     font-size: 11px;
-    font-weight: 600;
+    font-family: var(--pv-font-mono);
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--pv-border-subtle);
+    color: var(--pv-text-secondary);
     cursor: ns-resize;
-    user-select: none;
-    transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease;
 }
 
-.prompt-vault-tile-weight:hover {
-    background-color: rgba(59, 130, 246, 0.15);
-    border-color: var(--pv-accent-primary);
-    color: #ffffff;
-}
-
-.prompt-vault-tile.is-dragging {
-    opacity: 0.35;
-    border: 1px dashed var(--pv-accent-primary);
-}
-
-.prompt-vault-tile-row.drag-over-top .prompt-vault-tile {
-    border-top: 2px solid var(--pv-accent-primary);
-}
-
-.prompt-vault-tile-row.drag-over-bottom .prompt-vault-tile {
-    border-bottom: 2px solid var(--pv-accent-primary);
-}
-
-/* ========================================================
-   悬浮详情预览气泡 (Popover Tooltip)
-   ======================================================== */
-
-.prompt-vault-popover {
+/* 多组选择气泡浮层 */
+.prompt-vault-jump-menu {
     position: fixed;
-    z-index: 10005;
-    width: 320px;
-    max-width: 90vw;
-    background-color: #24262d;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: var(--pv-radius-lg);
-    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
-    padding: 14px;
-    box-sizing: border-box;
-    pointer-events: none;
-    animation: promptVaultPopoverFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    z-index: 10001;
+    background: rgba(24, 25, 32, 0.96);
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-md);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    padding: 4px;
+    min-width: 140px;
+    max-width: 220px;
     backdrop-filter: blur(10px);
 }
 
-@keyframes promptVaultPopoverFadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(4px) scale(0.98);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-    }
+.prompt-vault-jump-menu-title {
+    font-size: 10px;
+    color: var(--pv-text-muted);
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--pv-border-subtle);
+    margin-bottom: 2px;
 }
 
-.prompt-vault-popover-header {
+.prompt-vault-jump-menu-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    color: var(--pv-text-primary);
+    border-radius: var(--pv-radius-sm);
+    cursor: pointer;
+    transition: background 0.12s;
 }
 
-.prompt-vault-popover-title {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--pv-text-primary);
-    white-space: nowrap;
+.prompt-vault-jump-menu-item:hover {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--pv-accent-primary);
+}
+
+.pv-jump-name {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.prompt-vault-popover-preview {
+/* 组合手风琴与视图切换 */
+.prompt-vault-view-toggle-bar {
+    padding: 0;
+    display: flex;
     width: 100%;
-    max-height: 160px;
-    border-radius: var(--pv-radius-md);
+}
+
+.prompt-vault-view-toggle {
+    display: flex;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 2px;
+    border-radius: var(--pv-radius-pill);
     border: 1px solid var(--pv-border-subtle);
-    background-color: rgba(0, 0, 0, 0.25);
-    overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.prompt-vault-toggle-btn {
+    flex: 1 1 0;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--pv-text-secondary);
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: var(--pv-radius-pill);
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
+    transition: all 0.18s ease;
+    opacity: 0.75;
 }
 
-.prompt-vault-popover-preview img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.prompt-vault-popover-section-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--pv-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.prompt-vault-popover-prompt {
-    font-size: 12px;
-    line-height: 1.5;
+.prompt-vault-toggle-btn:hover:not(.is-active) {
     color: var(--pv-text-primary);
-    font-family: var(--pv-font-mono);
-    background-color: rgba(0, 0, 0, 0.2);
-    padding: 8px 10px;
-    border-radius: var(--pv-radius-sm);
-    border: 1px solid var(--pv-border-subtle);
-    word-break: break-all;
-    max-height: 140px;
-    overflow-y: auto;
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.05);
 }
 
-.prompt-vault-popover-tags {
+/* 选中高对比显著科技感 */
+.prompt-vault-toggle-btn.is-active {
+    background: var(--pv-accent-primary);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 1px 8px rgba(59, 130, 246, 0.5);
+    border-color: rgba(255, 255, 255, 0.2);
+    opacity: 1;
+}
+
+.prompt-vault-group-card {
+    flex: 0 0 auto;
+    background: var(--pv-bg-surface);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    margin-bottom: 5px;
+    overflow: hidden;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.prompt-vault-group-card.is-target-glow {
+    border-color: var(--pv-accent-primary) !important;
+    box-shadow: 0 0 14px rgba(59, 130, 246, 0.55) !important;
+    animation: pv-pulse-glow 1.5s ease;
+}
+
+@keyframes pv-pulse-glow {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.015);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+.prompt-vault-group-header {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.prompt-vault-group-header:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.prompt-vault-group-chevron {
+    color: var(--pv-text-muted);
+    display: flex;
+    align-items: center;
+}
+
+.prompt-vault-group-title-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.prompt-vault-group-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--pv-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.prompt-vault-group-count {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 6px;
+    border-radius: 10px;
+}
+
+.prompt-vault-group-actions {
+    display: flex;
+    align-items: center;
     gap: 4px;
 }
 
-.prompt-vault-popover-tag-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 6px;
-    border-radius: var(--pv-radius-sm);
-    font-size: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
-    color: var(--pv-text-secondary);
-    border: 1px solid var(--pv-border-subtle);
+.prompt-vault-group-body {
+    padding: 6px 8px 8px 14px;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid var(--pv-border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }

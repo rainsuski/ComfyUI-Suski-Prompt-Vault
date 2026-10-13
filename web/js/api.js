@@ -2,13 +2,14 @@
 
 /**
  * 后端 RESTful API 交互服务模块。
- * 针对 aaalice-prompt-library v2 标准数据结构量身定制，
- * 提供全量库读取、条目/分类/收藏夹 CRUD、单文件备份直接导入导出与缩略图加载。
+ * 针对 aaalice-prompt-library v2 标准数据模型量身定制，
+ * 提供全量库读取、条目/提示词组关系/分类/收藏夹 CRUD、
+ * 单文件备份直接导入导出与缩略图访问路径解析。
  */
 
 /**
  * 获取全量标准词库数据 (library.json)。
- * @returns {Promise<{ success: boolean, data: { format: string, version: number, categories: any[], collections: any[], tags: any[], entries: any[], selection: any } }>}
+ * @returns {Promise<{ success: boolean, data: { format: string, version: number, categories: any[], collections: any[], tags: any[], entries: any[], groups: any[], selection: any } }>}
  */
 export async function fetchLibrary() {
     try {
@@ -31,6 +32,7 @@ export async function fetchLibrary() {
                 collections: [],
                 tags: [],
                 entries: [],
+                groups: [],
                 selection: { entryIds: [] },
             },
         };
@@ -87,6 +89,47 @@ export async function deleteEntry(entryId) {
         return Boolean(result.success);
     } catch (error) {
         console.error("[PromptVault] Failed to delete entry:", error);
+        return false;
+    }
+}
+
+/**
+ * 新增或更新提示词组关系实体。
+ * @param {{ id?: string, title: string, categoryId?: string|null, entryIds: string[], note?: string }} groupPayload
+ * @returns {Promise<{ success: boolean, data?: any, error?: string }>}
+ */
+export async function upsertGroup(groupPayload) {
+    try {
+        const response = await fetch("/prompt_vault/api/groups", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(groupPayload),
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("[PromptVault] Failed to upsert group:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+/**
+ * 删除指定提示词组关系实体。
+ * @param {string} groupId
+ * @returns {Promise<boolean>}
+ */
+export async function deleteGroup(groupId) {
+    try {
+        const response = await fetch(`/prompt_vault/api/groups/${encodeURIComponent(groupId)}`, {
+            method: "DELETE",
+        });
+        if (!response.ok) return false;
+        const result = await response.json();
+        return Boolean(result.success);
+    } catch (error) {
+        console.error("[PromptVault] Failed to delete group:", error);
         return false;
     }
 }

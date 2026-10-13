@@ -2,20 +2,19 @@
 
 /**
  * 存为提示词组（SaveGroupModalManager）弹窗管理器。
- * 提供支持自输入与历史匹配的可输入下拉框（Combo Input），
- * 杜绝管理端擅自拼接全文（text 保持为空），仅维护纯净组合结构与成员，
- * 严格执行词库全项（词条名与组名）唯一重名校验（除覆盖自身绑定的原组外禁止重名）。
+ * 遵循归一化模型：组合仅维护 entryIds 关联清单。
+ * 针对中栏未入库的临时磁贴，严格执行全库重名检测阻止，并自动持久化生成 entry 后绑定组合。
  */
 
-import { upsertEntry } from "../../api.js";
+import { upsertEntry, upsertGroup } from "../../api.js";
 import { isolateCanvasEvents } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
 import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
 export class SaveGroupModalManager {
     /**
-     * @param {() => { categories: any[], entries?: any[] } | any} getLibraryCallback
-     * @param {(savedEntry: any) => Promise<void>} onSavedCallback
+     * @param {() => { categories: any[], entries?: any[], groups?: any[] } | any} getLibraryCallback
+     * @param {() => Promise<void>} onSavedCallback
      */
     constructor(getLibraryCallback, onSavedCallback) {
         this.getLibrary = getLibraryCallback;
@@ -32,22 +31,16 @@ export class SaveGroupModalManager {
         }
 
         const rawLib = typeof this.getLibrary === "function" ? this.getLibrary() : {};
-        const lib = Array.isArray(rawLib) ? { categories: rawLib, entries: [] } : (rawLib || {});
+        const lib = Array.isArray(rawLib) ? { categories: rawLib, entries: [], groups: [] } : (rawLib || {});
         const categories = lib.categories || [];
         const existingEntries = lib.entries || [];
+        const existingGroups = lib.groups || [];
         const categoryOptions = buildCategoryHierarchyOptions(categories);
 
-        // 提取所选磁贴中包含的已有组名并去重
         const candidateGroupTitles = Array.from(
             new Set(selectedTiles.map((t) => t.group_title).filter(Boolean))
         );
 
-        // 提取所选磁贴中关联的既有组合条目 ID 集合
-        const associatedPresetIds = new Set(
-            selectedTiles.map((t) => t.ref_preset_id).filter(Boolean)
-        );
-
-        // 智能默认值：恰好只有 1 个候选组名时自动预填，否则保持留空
         let initialDefaultTitle = "";
         if (candidateGroupTitles.length === 1) {
             initialDefaultTitle = candidateGroupTitles[0];
@@ -66,7 +59,7 @@ export class SaveGroupModalManager {
         <div class="prompt-vault-modal-body">
           <div class="prompt-vault-form-row">
             <div class="prompt-vault-form-col">
-              <label class="prompt-vault-form-label">组合名称 * (可输入新名称或下拉选择已有)</label>
+              <label class="prompt-vault-form-label">组合名称 * (可输入新名称或选择已有)</label>
               <input
                 type="text"
                 list="pv-group-datalist"
@@ -103,7 +96,7 @@ export class SaveGroupModalManager {
           </div>
 
           <div class="pv-info-callout" style="font-size: 11px; line-height: 1.4;">
-            提示词库中所有项（词条与词组）名称均保持全库唯一。保存后所选磁贴将原地绑定组合并点亮连线。
+            组合为纯净关系实体，所有词条将保存在词库中统一维护。若包含未入库的临时条目，将在此过程中自动录入词库。
           </div>
         </div>
         <div class="prompt-vault-modal-footer">
@@ -117,14 +110,14 @@ export class SaveGroupModalManager {
 
         document.body.appendChild(this.overlay);
 
-        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
+        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-modal-close") || this.overlay.querySelector(".prompt-vault-modal-close");
         const cancelBtn = this.overlay.querySelector("#pv-group-cancel");
         const submitBtn = this.overlay.querySelector("#pv-group-submit");
         const titleInput = this.overlay.querySelector("#pv-group-title");
         const categorySelect = this.overlay.querySelector("#pv-group-category");
 
         const handleClose = () => this.close();
-        closeBtn.addEventListener("click", handleClose);
+        if (closeBtn) closeBtn.addEventListener("click", handleClose);
         cancelBtn.addEventListener("click", handleClose);
         this.overlay.addEventListener("click", (e) => {
             if (e.target === this.overlay) handleClose();
@@ -140,19 +133,21 @@ export class SaveGroupModalManager {
                 return;
             }
 
-            // 全库唯一重名检测：同时检索全库所有词条名与组名
+            // 组合防重名检测
             const cleanTargetTitle = groupTitle.toLowerCase();
-            const duplicateEntry = existingEntries.find((e) => {
-                const existingTitle = (e.title || "").trim().toLowerCase();
-                return existingTitle === cleanTargetTitle;
-            });
+            const duplicateGroup = existingGroups.find(
+                (g) => (g.title || "").trim().toLowerCase() === cleanTargetTitle
+            );
 
-            if (duplicateEntry) {
-                // 仅当同名项正是当前所选磁贴绑定的同一个原组时，允许覆盖保存，其余一律拒绝重名
-                const isOverwritingSelf = associatedPresetIds.has(duplicateEntry.id);
-                if (!isOverwritingSelf) {
-                    alert(`词库中已存在名为 [${duplicateEntry.title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名，请更换名称！`);
-                    titleInput.focus();
+            // 检查临时未入库磁贴重名冲突
+            const draftTiles = selectedTiles.filter((t) => !t.ref_preset_id);
+            for (const draft of draftTiles) {
+                const draftCleanTitle = (draft.title || "").trim().toLowerCase();
+                const collided = existingEntries.find(
+                    (e) => (e.title || "").trim().toLowerCase() === draftCleanTitle
+                );
+                if (collided) {
+                    alert(`所选包含的未入库词条 [${draft.title}] 与词库已有词条重名！\n请在中栏重命名该词条后再打包组合。`);
                     return;
                 }
             }
@@ -161,49 +156,57 @@ export class SaveGroupModalManager {
             submitBtn.textContent = "保存中...";
 
             try {
-                const groupMembers = selectedTiles.map((t) => ({
-                    title: t.title || "组员",
-                    text: t.prompt || "",
-                }));
+                // 1. 自动持久化所有未入库的临时词条
+                for (const draft of draftTiles) {
+                    const entryRes = await upsertEntry({
+                        title: draft.title || "未命名词条",
+                        text: draft.prompt || "",
+                        categoryId: draft.category_id || categoryId,
+                        note: "打包组合时自动创建入库",
+                    });
+                    if (entryRes && entryRes.success && entryRes.data) {
+                        draft.ref_preset_id = entryRes.data.id;
+                        draft.is_dirty = false;
+                    } else {
+                        throw new Error(`自动创建词条 [${draft.title}] 失败`);
+                    }
+                }
 
-                const targetOverwriteEntry = duplicateEntry && associatedPresetIds.has(duplicateEntry.id)
-                    ? duplicateEntry
-                    : null;
+                // 2. 收集纯净 entryIds 序列
+                const entryIds = selectedTiles.map((t) => t.ref_preset_id).filter(Boolean);
 
-                const payload = {
-                    id: targetOverwriteEntry ? targetOverwriteEntry.id : undefined,
+                // 3. 持久化组合关系实体
+                const groupPayload = {
+                    id: duplicateGroup ? duplicateGroup.id : undefined,
                     title: groupTitle,
-                    text: "",
-                    categoryId: categoryId || (targetOverwriteEntry ? targetOverwriteEntry.categoryId : null),
-                    groupMembers: groupMembers,
-                    tags: targetOverwriteEntry ? targetOverwriteEntry.tags || [] : [],
-                    collections: targetOverwriteEntry ? targetOverwriteEntry.collections || [] : [],
-                    note: targetOverwriteEntry ? targetOverwriteEntry.note || "" : "由中栏已选词条序列打包生成",
-                    previewHash: targetOverwriteEntry ? targetOverwriteEntry.previewHash || targetOverwriteEntry.thumbnail || null : null,
+                    categoryId: categoryId || (duplicateGroup ? duplicateGroup.categoryId : null),
+                    entryIds: entryIds,
+                    note: duplicateGroup ? duplicateGroup.note : "由中栏选定磁贴序列打包生成",
                 };
 
-                const result = await upsertEntry(payload);
-                if (result && result.success) {
-                    const savedEntryId = result.data?.id || (targetOverwriteEntry ? targetOverwriteEntry.id : null);
+                const groupRes = await upsertGroup(groupPayload);
+                if (groupRes && groupRes.success) {
+                    const savedGroupId = groupRes.data?.id || (duplicateGroup ? duplicateGroup.id : null);
                     if (state) {
-                        const newGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+                        const newRuntimeGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                         state.bindTilesToGroup(
                             selectedTiles.map((t) => t.instance_id),
-                            newGroupId,
+                            newRuntimeGroupId,
                             groupTitle,
                             null,
-                            savedEntryId
+                            savedGroupId
                         );
                     }
+
                     if (typeof this.onSaved === "function") {
-                        await this.onSaved(result.data);
+                        await this.onSaved();
                     }
                     this.close();
                 } else {
-                    alert(`保存组合失败: ${result?.error || "服务未响应"}`);
+                    alert(`保存组合失败: ${groupRes?.error || "服务未响应"}`);
                 }
             } catch (err) {
-                console.error("[PromptVault] Error saving group template:", err);
+                console.error("[PromptVault] Error saving group:", err);
                 alert(`保存组合异常: ${String(err)}`);
             } finally {
                 if (submitBtn) {

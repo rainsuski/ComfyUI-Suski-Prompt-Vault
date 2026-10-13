@@ -2,10 +2,9 @@
 
 /**
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
- * 全面对齐 aaalice-prompt-library v2 标准数据模型，
+ * 遵循归一化模型：entries 存放纯净词条，groups 存放关系组合。
  * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
- * 接入导入预检冲突处理中心及导出预览统计中心。
- * 通过 WebSocket 监听词库变更广播，实现多节点多端视图实时响应与同步。
+ * 接入导入导出与 WebSocket 实时多节点同步广播。
  */
 
 import { api } from "../../../scripts/api.js";
@@ -28,7 +27,7 @@ import { isolateCanvasEvents } from "./js/utils/events.js";
 /** 目标节点名称标识 */
 const TARGET_NODE_TYPE = "PromptVaultSelector";
 
-/** 全局标准库缓存数据 (直接对齐 library.json 结构) */
+/** 全局标准库缓存数据 (对齐纯净 schema) */
 let globalLibrary = {
     format: "aaalice-prompt-library",
     version: 2,
@@ -36,6 +35,7 @@ let globalLibrary = {
     collections: [],
     tags: [],
     entries: [],
+    groups: [],
     selection: { entryIds: [] },
 };
 
@@ -201,7 +201,7 @@ app.registerExtension({
             });
             container.appendChild(importInput);
 
-            // 挂载左栏组件
+            // 挂载左栏组件：传递全库对象（含 entries 与 groups）
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -214,7 +214,7 @@ app.registerExtension({
                 () => exportModalManager.open()
             );
 
-            // 挂载中栏组件：向中栏透传全量 globalLibrary 回调，确保组合弹窗具备全库 entries 检索能力
+            // 挂载中栏组件
             new MiddleSelectedComponent(
                 colMiddle,
                 state,
@@ -246,10 +246,9 @@ app.registerExtension({
                 () => globalLibrary.categories || [],
                 (tileDraft) => {
                     if (!tileDraft) return;
-                    const isGroupMember = Boolean(tileDraft.group_id);
                     presetModalManager.open(
                         {
-                            id: isGroupMember ? undefined : (tileDraft.ref_preset_id || undefined),
+                            id: tileDraft.ref_preset_id || undefined,
                             ref_preset_id: tileDraft.ref_preset_id || undefined,
                             group_id: tileDraft.group_id || undefined,
                             instance_id: tileDraft.instance_id,
@@ -259,15 +258,14 @@ app.registerExtension({
                             previewHash: tileDraft.thumbnail,
                         },
                         {
-                            isGroupMember: isGroupMember,
+                            isGroupMember: false,
                             instanceId: tileDraft.instance_id,
-                            parentPresetId: tileDraft.ref_preset_id,
                             state: state,
                         }
                     );
                     presetModalManager.onSaved = async (savedEntry) => {
                         await refreshGlobalData();
-                        if (savedEntry && !isGroupMember) {
+                        if (savedEntry) {
                             state.markTileAsSavedToPreset(
                                 tileDraft.instance_id,
                                 savedEntry,

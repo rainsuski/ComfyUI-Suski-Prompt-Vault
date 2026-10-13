@@ -217,6 +217,40 @@
     border-radius: var(--pv-radius-sm);
 }
 
+/* 多选批量操作工具栏 (单行防挤压排布) */
+.prompt-vault-batch-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    border-radius: var(--pv-radius-md);
+    margin: 6px 8px 2px;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    box-sizing: border-box;
+}
+
+.prompt-vault-batch-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--pv-text-primary);
+    flex-shrink: 0;
+}
+
+.prompt-vault-batch-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 /* 滚动视口 */
 .prompt-vault-list-viewport {
     flex: 1 1 0;
@@ -226,7 +260,7 @@
     padding: 8px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     box-sizing: border-box;
 }
 
@@ -326,7 +360,7 @@
     border-color: var(--pv-border-active);
 }
 
-/* 底部动作条：删除细分割线，保障纯净通透的悬浮质感 */
+/* 底部动作条 */
 .prompt-vault-editor-actions {
     display: flex;
     align-items: center;

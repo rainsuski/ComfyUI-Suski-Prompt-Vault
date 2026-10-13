@@ -1,7 +1,7 @@
 # File: ComfyUI-Suski-Prompt-Vault/py/routes.py
 """ComfyUI aiohttp Web 服务端路由控制模块。
 
-提供符合 aaalice-prompt-library v2 标准的词库全量读写、条目/分类/收藏夹 CRUD、
+提供符合 aaalice-prompt-library v2 标准的词库全量读写、条目/组关系/分类/收藏夹 CRUD、
 多格式智能容错导入、单文件直接导出以及旧路由全量别名映射。
 支持在数据变更时向所有连接的客户端推送 WebSocket 广播通知。
 """
@@ -49,6 +49,7 @@ def register_routes() -> None:
                     "success": True,
                     "data": data,
                     "presets": data.get("entries", []),
+                    "groups": data.get("groups", []),
                     "categories": [c.get("name") for c in data.get("categories", [])],
                 }
             )
@@ -56,7 +57,7 @@ def register_routes() -> None:
             logger.error("Error in get_library_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
-    # 2. 词条增改接口 (新旧双路由支持，杜绝 405)
+    # 2. 词条增改接口 (新旧双路由支持)
     @routes.post("/prompt_vault/api/entries")
     @routes.post("/prompt_vault/api/presets")
     async def upsert_entry_endpoint(request: web.Request) -> web.Response:
@@ -119,7 +120,37 @@ def register_routes() -> None:
             logger.error("Error in delete_entry_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
-    # 3. 分类管理接口 (新旧双路由支持)
+    # 3. 提示词组关系管理接口
+    @routes.post("/prompt_vault/api/groups")
+    async def upsert_group_endpoint(request: web.Request) -> web.Response:
+        """创建或更新提示词组关系实体。"""
+        try:
+            group_data = await request.json()
+            success, saved_item = storage_manager.upsert_group(group_data)
+            if success:
+                broadcast_library_changed("upsert_group")
+                return web.json_response({"success": True, "data": saved_item})
+            return web.json_response(
+                {"success": False, "error": "Failed to persist group."}, status=500
+            )
+        except Exception as err:
+            logger.error("Error in upsert_group_endpoint: %s", str(err))
+            return web.json_response({"success": False, "error": str(err)}, status=400)
+
+    @routes.delete("/prompt_vault/api/groups/{id}")
+    async def delete_group_endpoint(request: web.Request) -> web.Response:
+        """删除指定提示词组关系实体。"""
+        try:
+            group_id = request.match_info.get("id", "")
+            success = storage_manager.delete_group(group_id)
+            if success:
+                broadcast_library_changed("delete_group")
+            return web.json_response({"success": success})
+        except Exception as err:
+            logger.error("Error in delete_group_endpoint: %s", str(err))
+            return web.json_response({"success": False, "error": str(err)}, status=500)
+
+    # 4. 分类管理接口 (新旧双路由支持)
     @routes.post("/prompt_vault/api/categories")
     @routes.post("/prompt_vault/api/taxonomies/category")
     async def upsert_category_endpoint(request: web.Request) -> web.Response:
@@ -151,7 +182,7 @@ def register_routes() -> None:
             logger.error("Error in delete_category_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
-    # 4. 收藏夹管理接口 (新旧双路由支持)
+    # 5. 收藏夹管理接口 (新旧双路由支持)
     @routes.post("/prompt_vault/api/collections")
     @routes.post("/prompt_vault/api/taxonomies/folder")
     async def upsert_collection_endpoint(request: web.Request) -> web.Response:
@@ -180,7 +211,7 @@ def register_routes() -> None:
             logger.error("Error in delete_collection_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
-    # 5. 智能容错导入接口（解决 UTF-8 BOM 与格式不兼容引起的 400 报错）
+    # 6. 智能容错导入接口
     @routes.post("/prompt_vault/api/import")
     async def import_library_endpoint(request: web.Request) -> web.Response:
         """导入 JSON 词库包。自动兼容 UTF-8 BOM、字典标准包与数组包。"""
@@ -208,11 +239,9 @@ def register_routes() -> None:
                     {"success": False, "error": "未接收到有效文件内容"}, status=400
                 )
 
-            # 使用 utf-8-sig 自动剥除 Windows Notepad 等软件附带的 UTF-8 BOM 头
             decoded_text = file_data.decode("utf-8-sig", errors="replace").strip()
             imported_json = json.loads(decoded_text)
 
-            # 结构容错包装
             if isinstance(imported_json, list):
                 imported_json = {
                     "format": "aaalice-prompt-library",
@@ -221,6 +250,7 @@ def register_routes() -> None:
                     "collections": [],
                     "tags": [],
                     "entries": imported_json,
+                    "groups": [],
                 }
 
             success, count = storage_manager.import_library(imported_json, mode=mode)
@@ -233,7 +263,7 @@ def register_routes() -> None:
                 {"success": False, "error": f"解析失败: {str(err)}"}, status=400
             )
 
-    # 6. 单文件直接导出
+    # 7. 单文件直接导出
     @routes.get("/prompt_vault/api/export")
     async def export_library_endpoint(request: web.Request) -> web.Response:
         """直接将标准 library.json 输出为下载文件。"""
@@ -249,7 +279,7 @@ def register_routes() -> None:
             logger.error("Error in export_library_endpoint: %s", str(err))
             return web.json_response({"success": False, "error": str(err)}, status=500)
 
-    # 7. 缩略图服务
+    # 8. 缩略图服务
     @routes.get("/prompt_vault/api/thumbnails/{name}")
     async def get_thumbnail_endpoint(request: web.Request) -> web.Response:
         """获取缩略图文件资源。"""
