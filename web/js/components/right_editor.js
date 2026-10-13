@@ -103,8 +103,8 @@ export class RightEditorComponent {
         this.emptyState.className = "prompt-vault-empty-state";
         this.emptyState.innerHTML = `
       <div class="prompt-vault-empty-icon">${renderIcon("messageSquare", 28)}</div>
-      <div>未选择磁贴</div>
-      <div style="font-size:11px; opacity:0.7;">从左侧词库点击磁贴或点击中栏磁贴即可在此编辑</div>
+      <div>未选择词条</div>
+      <div style="font-size:11px; opacity:0.7;">从左侧词库或中栏中点击词条即可在此编辑</div>
     `;
         this.body.appendChild(this.emptyState);
 

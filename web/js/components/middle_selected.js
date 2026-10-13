@@ -77,7 +77,7 @@ export class MiddleSelectedComponent {
         addEmptyBtn.type = "button";
         addEmptyBtn.className = "prompt-vault-btn prompt-vault-btn-default";
         addEmptyBtn.innerHTML = `${renderIcon("plus", 12)} <span>添加空词条</span>`;
-        addEmptyBtn.title = "在已选列表中插入一个临时空白草稿磁贴";
+        addEmptyBtn.title = "在已选列表中插入一个临时空白草稿词条";
         addEmptyBtn.addEventListener("click", () => {
             this.state.addEmptyTile();
         });
@@ -92,7 +92,7 @@ export class MiddleSelectedComponent {
         const searchInput = document.createElement("input");
         searchInput.type = "text";
         searchInput.className = "prompt-vault-input prompt-vault-search-box";
-        searchInput.placeholder = "过滤已选磁贴关键词...";
+        searchInput.placeholder = "过滤已选词条关键词...";
         searchInput.addEventListener("input", () => {
             this.searchKeyword = searchInput.value.trim().toLowerCase();
             this.renderList();
@@ -126,7 +126,7 @@ export class MiddleSelectedComponent {
         clearBtn.style.height = "24px";
         clearBtn.style.padding = "0 8px";
         clearBtn.innerHTML = `${renderIcon("trash", 12)} <span>清空已选</span>`;
-        clearBtn.title = "立即清空全部已选磁贴";
+        clearBtn.title = "立即清空全部已选词条";
         clearBtn.addEventListener("click", () => {
             this.state.clearAllTiles();
         });
@@ -172,7 +172,7 @@ export class MiddleSelectedComponent {
         saveGroupBtn.style.padding = "0 8px";
         saveGroupBtn.style.fontSize = "11px";
         saveGroupBtn.innerHTML = `${renderIcon("folder", 11)} <span>存为提示词组</span>`;
-        saveGroupBtn.title = "将当前选中的磁贴序列就地打包存为组合模板";
+        saveGroupBtn.title = "将当前选中的词条序列就地打包存为组合模板";
         saveGroupBtn.addEventListener("click", () => {
             const selectedTiles = this.state.getMultiSelectedTiles();
             this.groupModalManager.open(selectedTiles, this.state);
@@ -186,7 +186,7 @@ export class MiddleSelectedComponent {
         batchDelBtn.style.padding = "0 6px";
         batchDelBtn.style.fontSize = "11px";
         batchDelBtn.innerHTML = `${renderIcon("trash", 11)} <span>删除所选</span>`;
-        batchDelBtn.title = "批量移除选中的磁贴";
+        batchDelBtn.title = "批量移除选中的词条";
         batchDelBtn.addEventListener("click", () => {
             this.state.removeMultiSelectedTiles();
         });
@@ -364,7 +364,7 @@ export class MiddleSelectedComponent {
         <div class="prompt-vault-empty-state">
           <div class="prompt-vault-empty-icon">${renderIcon("messageSquare", 28)}</div>
           <div>未选择提示词</div>
-          <div style="font-size:11px; opacity:0.7;">从左侧词库点击磁贴即可加入，或点击上方添加空词条</div>
+          <div style="font-size:11px; opacity:0.7;">从左侧词库点击词条即可加入，或点击上方添加空词条</div>
         </div>
       `;
         } else if (filtered.length === 0) {
