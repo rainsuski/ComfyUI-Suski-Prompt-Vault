@@ -2,9 +2,9 @@
 
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
- * 提供单体视图与组合视图切换、精简单行搜索展开、
+ * 提词条视图与组合视图切换、精简单行搜索展开、
  * 组视图手风琴二级折叠展开、跨视图平滑滚动定位与微光闪烁、
- * 全面采用纯净矢量 SVG 图标（零 Emoji）。
+ * 组合卡片与词条保持一致的点击添加/删除模式，箭头独立折叠，支持组信息快速编辑。
  */
 
 import { deleteGroup } from "../api.js";
@@ -15,6 +15,9 @@ import { createTileElement } from "./tile.js";
 function getVectorIcon(name, size = 13) {
     if (name === "search") {
         return renderIcon("search", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+    }
+    if (name === "edit") {
+        return renderIcon("edit", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`;
     }
     return renderIcon(name, size);
 }
@@ -63,6 +66,7 @@ export class LeftVaultComponent {
      * @param {(entry: any) => void} onDeleteEntryCallback
      * @param {() => void} onOpenImportModalCallback
      * @param {() => void} onOpenExportModalCallback
+     * @param {(group: any) => void} [onOpenEditGroupModalCallback]
      */
     constructor(
         container,
@@ -73,7 +77,8 @@ export class LeftVaultComponent {
         onOpenTaxonomyManagerCallback,
         onDeleteEntryCallback,
         onOpenImportModalCallback,
-        onOpenExportModalCallback
+        onOpenExportModalCallback,
+        onOpenEditGroupModalCallback
     ) {
         this.container = container;
         this.state = state;
@@ -84,6 +89,7 @@ export class LeftVaultComponent {
         this.onDeleteEntry = onDeleteEntryCallback;
         this.onOpenImportModal = onOpenImportModalCallback;
         this.onOpenExportModal = onOpenExportModalCallback;
+        this.onOpenEditGroupModal = onOpenEditGroupModalCallback;
 
         this.viewMode = "single";
         this.isSearchActive = false;
@@ -169,7 +175,7 @@ export class LeftVaultComponent {
         this.singleViewBtn = document.createElement("button");
         this.singleViewBtn.type = "button";
         this.singleViewBtn.className = "prompt-vault-toggle-btn is-active";
-        this.singleViewBtn.innerHTML = `${getVectorIcon("messageSquare", 12)} <span>单体视图</span>`;
+        this.singleViewBtn.innerHTML = `${getVectorIcon("messageSquare", 12)} <span>词条视图</span>`;
         this.singleViewBtn.addEventListener("click", () => {
             if (this.viewMode !== "single") {
                 this.viewMode = "single";
@@ -456,7 +462,7 @@ export class LeftVaultComponent {
             });
         }
 
-        this.footer.textContent = `单体词条共 ${entries.length} 条 (展示 ${filtered.length} 条)`;
+        this.footer.textContent = `词条共 ${entries.length} 条 (展示 ${filtered.length} 条)`;
     }
 
     renderGroupView(groups, entries, categories, tagsDict) {
@@ -499,16 +505,34 @@ export class LeftVaultComponent {
                 const isExpanded = this.expandedGroupIds.has(group.id);
                 const memberIds = Array.isArray(group.entryIds) ? group.entryIds : [];
 
+                const isWholeGroupAdded = Boolean(
+                    group.id && this.state.selectedTiles.some((t) => t.group_preset_id === group.id)
+                );
+
                 const card = document.createElement("div");
                 card.className = "prompt-vault-group-card";
+                if (isWholeGroupAdded) {
+                    card.classList.add("is-vault-selected");
+                }
                 card.dataset.groupId = group.id;
 
                 const headerRow = document.createElement("div");
                 headerRow.className = "prompt-vault-group-header";
 
+                // 独立折叠展开箭头
                 const expandIcon = document.createElement("span");
                 expandIcon.className = "prompt-vault-group-chevron";
                 expandIcon.innerHTML = getVectorIcon(isExpanded ? "chevronDown" : "chevronRight", 13);
+                expandIcon.title = isExpanded ? "折叠组内成员" : "展开组内成员";
+                expandIcon.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    if (this.expandedGroupIds.has(group.id)) {
+                        this.expandedGroupIds.delete(group.id);
+                    } else {
+                        this.expandedGroupIds.add(group.id);
+                    }
+                    this.renderList();
+                });
                 headerRow.appendChild(expandIcon);
 
                 const titleBox = document.createElement("div");
@@ -538,27 +562,22 @@ export class LeftVaultComponent {
                 countBadge.textContent = `${memberIds.length} 项`;
                 headerRow.appendChild(countBadge);
 
+                // 右侧动作条：编辑信息 + 解散组合
                 const actionsBar = document.createElement("div");
                 actionsBar.className = "prompt-vault-group-actions";
 
-                const isWholeGroupAdded = Boolean(
-                    group.id && this.state.selectedTiles.some((t) => t.group_preset_id === group.id)
-                );
-
-                const toggleAddBtn = document.createElement("button");
-                toggleAddBtn.type = "button";
-                toggleAddBtn.className = `prompt-vault-tile-btn ${isWholeGroupAdded ? "is-starred" : ""}`;
-                toggleAddBtn.title = isWholeGroupAdded ? "从中栏移出该组合" : "整组添加进中栏";
-                toggleAddBtn.innerHTML = getVectorIcon(isWholeGroupAdded ? "check" : "plus", 13);
-                toggleAddBtn.addEventListener("click", (e) => {
+                const editGroupBtn = document.createElement("button");
+                editGroupBtn.type = "button";
+                editGroupBtn.className = "prompt-vault-tile-btn";
+                editGroupBtn.title = "编辑提示词组名称与所属分类";
+                editGroupBtn.innerHTML = getVectorIcon("edit", 13);
+                editGroupBtn.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    if (isWholeGroupAdded) {
-                        this.state.removeGroupByPresetId(group.id);
-                    } else {
-                        this.state.addGroup(group, entries, categories);
+                    if (typeof this.onOpenEditGroupModal === "function") {
+                        this.onOpenEditGroupModal(group);
                     }
                 });
-                actionsBar.appendChild(toggleAddBtn);
+                actionsBar.appendChild(editGroupBtn);
 
                 const delGroupBtn = document.createElement("button");
                 delGroupBtn.type = "button";
@@ -575,13 +594,16 @@ export class LeftVaultComponent {
 
                 headerRow.appendChild(actionsBar);
 
-                headerRow.addEventListener("click", () => {
-                    if (this.expandedGroupIds.has(group.id)) {
-                        this.expandedGroupIds.delete(group.id);
+                // 点击磁贴头部整行：逻辑与单体词条一致，已添加则移出，未添加则添加整组
+                headerRow.addEventListener("click", (e) => {
+                    if (e.target.closest(".prompt-vault-group-actions")) return;
+                    if (e.target.closest(".prompt-vault-group-chevron")) return;
+
+                    if (isWholeGroupAdded) {
+                        this.state.removeGroupByPresetId(group.id);
                     } else {
-                        this.expandedGroupIds.add(group.id);
+                        this.state.addGroup(group, entries, categories);
                     }
-                    this.renderList();
                 });
 
                 card.appendChild(headerRow);

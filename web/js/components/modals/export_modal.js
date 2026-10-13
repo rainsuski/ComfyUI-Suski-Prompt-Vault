@@ -1,8 +1,8 @@
-/* File: ComfyUI-Suski-Prompt-Vault/web/js/components/modals/export_modal.js */
+/* File: ComfyUI-Suski-Prompt-Vault/web/js/modals/export_modal.js */
 
 /**
  * 导出数据统计与预览中心（ExportModalManager）。
- * 提供词条/分类/收藏夹/缩略图引用四维可视化统计卡片，一键触发标准 JSON 导出。
+ * 提供词条/组/分类/收藏夹/缩略图引用五维可视化统计卡片，一键触发标准 JSON 导出。
  */
 
 import { triggerExportLibrary } from "../../api.js";
@@ -20,8 +20,9 @@ export class ExportModalManager {
 
     open() {
         this.close();
-        const lib = this.getLibrary();
+        const lib = this.getLibrary() || {};
         const entries = lib.entries || [];
+        const groups = lib.groups || [];
         const categories = lib.categories || [];
         const collections = lib.collections || [];
 
@@ -46,7 +47,7 @@ export class ExportModalManager {
               <div>
                 <span class="pv-export-badge">便携备份</span>
                 <div class="pv-export-title">导出提示词库</div>
-                <div class="pv-export-subtitle">相关分类、收藏夹、标签和预览图引用会自动打包。</div>
+                <div class="pv-export-subtitle">相关分类、提示词组、收藏夹、标签和预览图引用会自动打包。</div>
               </div>
             </div>
             <div class="pv-export-card-right">
@@ -59,6 +60,10 @@ export class ExportModalManager {
             <div class="pv-export-stat-box">
               <span class="pv-export-stat-num">${entries.length}</span>
               <span class="pv-export-stat-label">词条</span>
+            </div>
+            <div class="pv-export-stat-box">
+              <span class="pv-export-stat-num">${groups.length}</span>
+              <span class="pv-export-stat-label">组</span>
             </div>
             <div class="pv-export-stat-box">
               <span class="pv-export-stat-num">${categories.length}</span>
@@ -90,16 +95,18 @@ export class ExportModalManager {
         const confirmBtn = this.overlay.querySelector("#pv-export-confirm");
 
         const handleClose = () => this.close();
-        closeBtn.addEventListener("click", handleClose);
-        cancelBtn.addEventListener("click", handleClose);
+        if (closeBtn) closeBtn.addEventListener("click", handleClose);
+        if (cancelBtn) cancelBtn.addEventListener("click", handleClose);
         this.overlay.addEventListener("click", (e) => {
             if (e.target === this.overlay) handleClose();
         });
 
-        confirmBtn.addEventListener("click", () => {
-            triggerExportLibrary();
-            this.close();
-        });
+        if (confirmBtn) {
+            confirmBtn.addEventListener("click", () => {
+                triggerExportLibrary();
+                this.close();
+            });
+        }
     }
 
     close() {

@@ -1,25 +1,48 @@
 # File: ComfyUI-Suski-Prompt-Vault/py/storage.py
 """数据持久化与安全读写存储模块。
 
-基于 aaalice-prompt-library v2 标准数据模型实现统一单文件管理，
-将词条 entries 与关系型提示词组 groups 彻底物理分离。
-提供线程安全的原子写入、分类树级联、标签映射、
+基于 suski-prompt-library v1 标准数据模型实现统一单文件管理，
+将词条 entries 与关系型提示词组 groups 物理分离，支持向下兼容迁移旧标准包。
+提供线程安全的原子写入、分类树级联、标签映射、词条重名 (count) 自动处理、
 词条删除对组合 entryIds 的自动级联清理以及全量 CRUD 操作。
 """
 
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .config import DEFAULT_LIBRARY, LIBRARY_FILE, THUMBNAILS_DIR
 
 logger = logging.getLogger("ComfyUI-Suski-Prompt-Vault")
+
+
+def _resolve_unique_title(raw_title: str, existing_titles: Set[str]) -> str:
+    """生成唯一标题，若已存在同名则自动附加 (count) 递增后缀。"""
+    trimmed = (raw_title or "").strip() or "未命名条目"
+    if trimmed not in existing_titles:
+        existing_titles.add(trimmed)
+        return trimmed
+
+    match = re.match(r"^(.*?)(?:\s*\((\d+)\))?$", trimmed)
+    base_name = match.group(1).strip() if (match and match.group(1)) else trimmed
+    if not base_name:
+        base_name = "未命名条目"
+
+    count = 1
+    candidate = f"{base_name} ({count})"
+    while candidate in existing_titles:
+        count += 1
+        candidate = f"{base_name} ({count})"
+
+    existing_titles.add(candidate)
+    return candidate
 
 
 class StorageManager:
@@ -29,9 +52,11 @@ class StorageManager:
         self._lock = threading.Lock()
 
     def _read_library(self) -> Dict[str, Any]:
-        """从磁盘安全读取完整词库 JSON 对象，若结构缺失则安全初始化。"""
+        """从磁盘安全读取完整词库 JSON 对象，向下兼容升级并确保各字段完整。"""
         if not LIBRARY_FILE.exists():
-            default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+            default_copy: Dict[str, Any] = json.loads(json.dumps(DEFAULT_LIBRARY))
+            default_copy["format"] = "suski-prompt-library"
+            default_copy["version"] = 1
             default_copy.setdefault("groups", [])
             self._write_atomic(default_copy)
             return default_copy
@@ -39,8 +64,9 @@ class StorageManager:
             with open(LIBRARY_FILE, "r", encoding="utf-8-sig") as file:
                 data = json.load(file)
                 if isinstance(data, dict):
-                    data.setdefault("format", "aaalice-prompt-library")
-                    data.setdefault("version", 2)
+                    # 平滑向下兼容迁移旧格式
+                    data["format"] = "suski-prompt-library"
+                    data["version"] = 1
                     data.setdefault("categories", [])
                     data.setdefault("collections", [])
                     data.setdefault("tags", [])
@@ -49,12 +75,16 @@ class StorageManager:
                     data.setdefault("selection", {"entryIds": []})
                     return data
                 default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+                default_copy["format"] = "suski-prompt-library"
+                default_copy["version"] = 1
                 default_copy.setdefault("groups", [])
                 self._write_atomic(default_copy)
                 return default_copy
         except (json.JSONDecodeError, OSError) as err:
             logger.error("Failed to read library.json: %s", str(err))
             default_copy = json.loads(json.dumps(DEFAULT_LIBRARY))
+            default_copy["format"] = "suski-prompt-library"
+            default_copy["version"] = 1
             default_copy.setdefault("groups", [])
             self._write_atomic(default_copy)
             return default_copy
@@ -90,7 +120,7 @@ class StorageManager:
     def upsert_entry(
         self, entry_payload: Dict[str, Any]
     ) -> Tuple[bool, Dict[str, Any]]:
-        """新增或更新提示词条目，保证词条存储纯净度。"""
+        """新增或更新提示词条目，保证词条存储纯净度与重名保护。"""
         with self._lock:
             lib = self._read_library()
             entries: List[Dict[str, Any]] = lib.setdefault("entries", [])
@@ -114,9 +144,19 @@ class StorageManager:
                     if tags_map[clean_name] not in tag_ids:
                         tag_ids.append(tags_map[clean_name])
 
+            # 同名检测与自动重命名
+            existing_titles = {
+                (e.get("title") or "").strip()
+                for e in entries
+                if e.get("id") != target_id
+            }
+            clean_title = _resolve_unique_title(
+                entry_payload.get("title") or "未命名词条", existing_titles
+            )
+
             entry_item: Dict[str, Any] = {
                 "id": target_id,
-                "title": entry_payload.get("title") or "未命名词条",
+                "title": clean_title,
                 "text": entry_payload.get("text") or entry_payload.get("prompt") or "",
                 "note": entry_payload.get("note") or "",
                 "position": entry_payload.get("position", len(entries)),
@@ -145,7 +185,7 @@ class StorageManager:
             return success, entry_item
 
     def delete_entry(self, entry_id: str) -> bool:
-        """删除指定词条，并自动从所有提示词组中移除其引用（静默保留空组）。"""
+        """删除指定词条，并自动从所有提示词组中移除其引用。"""
         with self._lock:
             lib = self._read_library()
             entries = lib.get("entries", [])
@@ -171,7 +211,7 @@ class StorageManager:
     def upsert_group(
         self, group_payload: Dict[str, Any]
     ) -> Tuple[bool, Dict[str, Any]]:
-        """新增或更新提示词组关系实体。"""
+        """新增或更新提示词组关系实体，支持组标题防重名。"""
         with self._lock:
             lib = self._read_library()
             groups: List[Dict[str, Any]] = lib.setdefault("groups", [])
@@ -183,9 +223,18 @@ class StorageManager:
             )
             clean_entry_ids = [str(eid) for eid in raw_entry_ids if eid]
 
+            existing_group_titles = {
+                (g.get("title") or "").strip()
+                for g in groups
+                if g.get("id") != target_id
+            }
+            clean_title = _resolve_unique_title(
+                group_payload.get("title") or "未命名组合", existing_group_titles
+            )
+
             group_item: Dict[str, Any] = {
                 "id": target_id,
-                "title": (group_payload.get("title") or "未命名组合").strip(),
+                "title": clean_title,
                 "categoryId": group_payload.get("categoryId")
                 or group_payload.get("category_id")
                 or None,
@@ -345,19 +394,31 @@ class StorageManager:
     def import_library(
         self, imported_data: Dict[str, Any], mode: str = "overwrite"
     ) -> Tuple[bool, int]:
-        """导入外部词库标准包。"""
+        """导入外部词库标准包，支持向下兼容旧格式及同名自动重命名 (count)。"""
         with self._lock:
             if not isinstance(imported_data, dict):
                 return False, 0
 
-            imported_data["format"] = "aaalice-prompt-library"
-            imported_data.setdefault("version", 2)
+            imported_data["format"] = "suski-prompt-library"
+            imported_data["version"] = 1
             imported_data.setdefault("categories", [])
             imported_data.setdefault("collections", [])
             imported_data.setdefault("tags", [])
             imported_data.setdefault("entries", [])
             imported_data.setdefault("groups", [])
             imported_data.setdefault("selection", {"entryIds": []})
+
+            used_entry_titles: Set[str] = set()
+            for entry in imported_data["entries"]:
+                entry["title"] = _resolve_unique_title(
+                    entry.get("title", ""), used_entry_titles
+                )
+
+            used_group_titles: Set[str] = set()
+            for group in imported_data["groups"]:
+                group["title"] = _resolve_unique_title(
+                    group.get("title", ""), used_group_titles
+                )
 
             if mode == "overwrite":
                 success = self._write_atomic(imported_data)

@@ -17,6 +17,7 @@ import {
     FavoriteModalManager,
     ImportModalManager,
     PresetModalManager,
+    SaveGroupModalManager,
     TaxonomyModalManager,
     TileDeleteConfirmModal,
 } from "./js/components/modal.js";
@@ -178,6 +179,11 @@ app.registerExtension({
                 () => globalLibrary
             );
 
+            const saveGroupModalManager = new SaveGroupModalManager(
+                () => globalLibrary,
+                notifyRefresh
+            );
+
             const importInput = document.createElement("input");
             importInput.type = "file";
             importInput.accept = ".json";
@@ -201,7 +207,7 @@ app.registerExtension({
             });
             container.appendChild(importInput);
 
-            // 挂载左栏组件：传递全库对象（含 entries 与 groups）
+            // 挂载左栏组件：传递全库对象与组编辑回调
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -211,7 +217,8 @@ app.registerExtension({
                 () => taxonomyModalManager.open(),
                 (entry) => tileDeleteConfirmModal.open(entry),
                 () => importInput.click(),
-                () => exportModalManager.open()
+                () => exportModalManager.open(),
+                (group) => saveGroupModalManager.openEdit(group)
             );
 
             // 挂载中栏组件

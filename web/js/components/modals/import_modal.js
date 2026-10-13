@@ -1,14 +1,41 @@
-/* File: ComfyUI-Suski-Prompt-Vault/web/js/components/modals/import_modal.js */
+/* File: ComfyUI-Suski-Prompt-Vault/web/js/modals/import_modal.js */
 
 /**
  * 导入词库差异预检与冲突处理中心（ImportModalManager）。
  * 支持文件完整性校验、五维统计（新增/已有/冲突/重复/无效）、
- * 可折叠差异审查与覆盖/保留/创建副本批量冲突消解策略。
+ * 全局重名自动重命名 (count)、提示词组 (groups) 安全合并以及向下兼容迁移旧标准。
  */
 
 import { importLibrary } from "../../api.js";
 import { isolateCanvasEvents } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
+
+/**
+ * 生成唯一标题（若重名则自动添加 (count) 递增后缀，防嵌套编号）。
+ * @param {string} rawTitle 原始标题
+ * @param {Set<string>} existingTitlesSet 已存在的标题集合
+ * @returns {string} 唯一标题
+ */
+function resolveUniqueTitle(rawTitle, existingTitlesSet) {
+    const trimmed = (rawTitle || "").trim() || "未命名条目";
+    if (!existingTitlesSet.has(trimmed)) {
+        existingTitlesSet.add(trimmed);
+        return trimmed;
+    }
+
+    const baseMatch = trimmed.match(/^(.*?)(?:\s*\((\d+)\))?$/);
+    const baseName = (baseMatch && baseMatch[1] ? baseMatch[1].trim() : trimmed) || "未命名条目";
+
+    let count = 1;
+    let candidate = `${baseName} (${count})`;
+    while (existingTitlesSet.has(candidate)) {
+        count += 1;
+        candidate = `${baseName} (${count})`;
+    }
+
+    existingTitlesSet.add(candidate);
+    return candidate;
+}
 
 export class ImportModalManager {
     /**
@@ -24,23 +51,26 @@ export class ImportModalManager {
     open(importedData, fileName = "manifest.json", fileSize = 0) {
         this.close();
 
-        const localLib = this.getLibrary();
+        const localLib = this.getLibrary() || {};
         const localEntries = localLib.entries || [];
         const localCategories = localLib.categories || [];
         const localCollections = localLib.collections || [];
+        const localGroups = localLib.groups || [];
 
         let rawEntries = [];
         let rawCategories = [];
         let rawCollections = [];
         let rawTags = [];
+        let rawGroups = [];
 
         if (Array.isArray(importedData)) {
             rawEntries = importedData;
         } else if (importedData && typeof importedData === "object") {
-            rawEntries = importedData.entries || [];
-            rawCategories = importedData.categories || [];
-            rawCollections = importedData.collections || [];
-            rawTags = importedData.tags || [];
+            rawEntries = Array.isArray(importedData.entries) ? importedData.entries : [];
+            rawCategories = Array.isArray(importedData.categories) ? importedData.categories : [];
+            rawCollections = Array.isArray(importedData.collections) ? importedData.collections : [];
+            rawTags = Array.isArray(importedData.tags) ? importedData.tags : [];
+            rawGroups = Array.isArray(importedData.groups) ? importedData.groups : [];
         }
 
         const localIdMap = new Map(localEntries.map((e) => [e.id, e]));
@@ -263,7 +293,7 @@ export class ImportModalManager {
         </div>
         <div class="prompt-vault-modal-footer">
           <div style="margin-right: auto; font-size: 11px; color: var(--pv-text-muted);">
-            安全事务合并，未冲突与已有词条保持完整不变
+            安全事务合并，重名词条与提示词组将自动编号重命名
           </div>
           <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-import-cancel">取消</button>
           <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-import-submit">
@@ -281,8 +311,8 @@ export class ImportModalManager {
         const batchSelect = this.overlay.querySelector("#pv-batch-strategy");
 
         const handleClose = () => this.close();
-        closeBtn.addEventListener("click", handleClose);
-        cancelBtn.addEventListener("click", handleClose);
+        if (closeBtn) closeBtn.addEventListener("click", handleClose);
+        if (cancelBtn) cancelBtn.addEventListener("click", handleClose);
         this.overlay.addEventListener("click", (e) => {
             if (e.target === this.overlay) handleClose();
         });
@@ -292,7 +322,8 @@ export class ImportModalManager {
             const header = sec.querySelector(".pv-accordion-header");
             if (header) {
                 header.addEventListener("click", (e) => {
-                    if (e.target.closest("select")) return;
+                    const target = /** @type {HTMLElement|null} */ (e.target);
+                    if (target && target.closest("select")) return;
                     sec.classList.toggle("is-open");
                 });
             }
@@ -315,91 +346,153 @@ export class ImportModalManager {
         const itemSelects = this.overlay.querySelectorAll(".pv-item-strategy");
         itemSelects.forEach((sel) => {
             sel.addEventListener("change", (e) => {
-                const idx = parseInt(e.target.dataset.idx, 10);
+                const target = /** @type {HTMLSelectElement} */ (e.target);
+                const idx = parseInt(target.dataset.idx || "0", 10);
                 if (conflictEntries[idx]) {
-                    conflictEntries[idx].strategy = e.target.value;
+                    conflictEntries[idx].strategy = target.value;
                 }
             });
         });
 
-        submitBtn.addEventListener("click", async () => {
-            submitBtn.disabled = true;
-            submitBtn.textContent = "导入中...";
+        if (submitBtn) {
+            submitBtn.addEventListener("click", async () => {
+                submitBtn.disabled = true;
+                submitBtn.textContent = "导入中...";
 
-            const mergedCategories = [...localCategories];
-            const localCatIds = new Set(localCategories.map((c) => c.id));
-            rawCategories.forEach((rc) => {
-                if (!localCatIds.has(rc.id)) {
-                    mergedCategories.push(rc);
-                }
-            });
-
-            const mergedCollections = [...localCollections];
-            const localColNames = new Set(localCollections.map((c) => c.name));
-            rawCollections.forEach((rcol) => {
-                if (!localColNames.has(rcol.name)) {
-                    mergedCollections.push(rcol);
-                }
-            });
-
-            const mergedTags = [...(localLib.tags || [])];
-            const localTagNames = new Set(mergedTags.map((t) => t.name));
-            rawTags.forEach((rt) => {
-                if (!localTagNames.has(rt.name)) {
-                    mergedTags.push(rt);
-                }
-            });
-
-            const finalEntries = [...localEntries];
-
-            newEntries.forEach((ne) => {
-                finalEntries.push(ne);
-            });
-
-            conflictEntries.forEach((c) => {
-                if (c.strategy === "overwrite") {
-                    const idx = finalEntries.findIndex((e) => e.id === c.item.id);
-                    if (idx !== -1) {
-                        finalEntries[idx] = c.item;
-                    } else {
-                        finalEntries.push(c.item);
+                // 1. 合并分类（以 ID 为基准）
+                const mergedCategories = [...localCategories];
+                const localCatIds = new Set(localCategories.map((c) => c.id));
+                rawCategories.forEach((rc) => {
+                    if (rc && rc.id && !localCatIds.has(rc.id)) {
+                        mergedCategories.push(rc);
                     }
-                } else if (c.strategy === "copy") {
-                    const copyItem = {
-                        ...c.item,
-                        id: `entry_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-                        title: `${c.item.title || "词条"} (副本)`,
-                    };
-                    finalEntries.push(copyItem);
+                });
+
+                // 2. 合并收藏夹（以名称为基准）
+                const mergedCollections = [...localCollections];
+                const localColNames = new Set(localCollections.map((c) => c.name));
+                rawCollections.forEach((rcol) => {
+                    if (rcol && rcol.name && !localColNames.has(rcol.name)) {
+                        mergedCollections.push(rcol);
+                    }
+                });
+
+                // 3. 合并标签（以名称为基准）
+                const mergedTags = [...(localLib.tags || [])];
+                const localTagNames = new Set(mergedTags.map((t) => t.name));
+                rawTags.forEach((rt) => {
+                    if (rt && rt.name && !localTagNames.has(rt.name)) {
+                        mergedTags.push(rt);
+                    }
+                });
+
+                // 4. 词条标题严格查重与自动重命名合并
+                const finalEntries = [];
+                const usedEntryTitles = new Set();
+
+                const overwriteMap = new Map();
+                conflictEntries.forEach((c) => {
+                    if (c.strategy === "overwrite" && c.item && c.item.id) {
+                        overwriteMap.set(c.item.id, c.item);
+                    }
+                });
+
+                // 4.1 优先保留未被覆盖的本地词条
+                localEntries.forEach((localEntry) => {
+                    if (overwriteMap.has(localEntry.id)) {
+                        return;
+                    }
+                    const cleanTitle = (localEntry.title || "").trim() || "未命名词条";
+                    usedEntryTitles.add(cleanTitle);
+                    finalEntries.push({
+                        ...localEntry,
+                        title: cleanTitle,
+                    });
+                });
+
+                // 4.2 处理覆盖项并确保标题不冲突
+                overwriteMap.forEach((item) => {
+                    const uniqueTitle = resolveUniqueTitle(item.title, usedEntryTitles);
+                    finalEntries.push({
+                        ...item,
+                        title: uniqueTitle,
+                    });
+                });
+
+                // 4.3 处理创建副本项
+                conflictEntries.forEach((c) => {
+                    if (c.strategy === "copy") {
+                        const uniqueTitle = resolveUniqueTitle(c.item.title, usedEntryTitles);
+                        finalEntries.push({
+                            ...c.item,
+                            id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                            title: uniqueTitle,
+                        });
+                    }
+                });
+
+                // 4.4 处理全新词条项
+                newEntries.forEach((ne) => {
+                    const uniqueTitle = resolveUniqueTitle(ne.title, usedEntryTitles);
+                    finalEntries.push({
+                        ...ne,
+                        title: uniqueTitle,
+                    });
+                });
+
+                // 5. 提示词组（Groups）安全合并与重名自动重命名
+                const mergedGroups = [];
+                const usedGroupTitles = new Set();
+                const localGroupIds = new Set(localGroups.map((g) => g.id));
+
+                localGroups.forEach((lg) => {
+                    const cleanGroupTitle = (lg.title || "").trim() || "未命名组合";
+                    usedGroupTitles.add(cleanGroupTitle);
+                    mergedGroups.push({
+                        ...lg,
+                        title: cleanGroupTitle,
+                    });
+                });
+
+                rawGroups.forEach((rg) => {
+                    if (rg && rg.id && !localGroupIds.has(rg.id)) {
+                        const uniqueGroupTitle = resolveUniqueTitle(rg.title, usedGroupTitles);
+                        mergedGroups.push({
+                            ...rg,
+                            title: uniqueGroupTitle,
+                        });
+                    }
+                });
+
+                // 6. 统一采用 suski-prompt-library v1 标准结构
+                const resolvedLibrary = {
+                    format: "suski-prompt-library",
+                    version: 1,
+                    categories: mergedCategories,
+                    collections: mergedCollections,
+                    tags: mergedTags,
+                    entries: finalEntries,
+                    groups: mergedGroups,
+                    selection: localLib.selection || { entryIds: [] },
+                };
+
+                const resolvedFile = new File(
+                    [new Blob([JSON.stringify(resolvedLibrary, null, 2)], { type: "application/json" })],
+                    fileName,
+                    { type: "application/json" }
+                );
+
+                const res = await importLibrary(resolvedFile, "overwrite");
+                if (res && res.success) {
+                    if (typeof this.onUpdated === "function") await this.onUpdated();
+                    this.close();
+                } else {
+                    alert(`导入失败: ${res?.error || "服务未响应"}`);
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "执行导入";
                 }
             });
-
-            const resolvedLibrary = {
-                format: "aaalice-prompt-library",
-                version: 2,
-                categories: mergedCategories,
-                collections: mergedCollections,
-                tags: mergedTags,
-                entries: finalEntries,
-                selection: localLib.selection || { entryIds: [] },
-            };
-
-            const resolvedFile = new File(
-                [new Blob([JSON.stringify(resolvedLibrary, null, 2)], { type: "application/json" })],
-                fileName,
-                { type: "application/json" }
-            );
-
-            const res = await importLibrary(resolvedFile, "overwrite");
-            if (res && res.success) {
-                if (typeof this.onUpdated === "function") await this.onUpdated();
-                this.close();
-            } else {
-                alert(`导入失败: ${res?.error || "服务未响应"}`);
-                submitBtn.disabled = false;
-                submitBtn.textContent = "执行导入";
-            }
-        });
+        }
     }
 
     close() {

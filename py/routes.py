@@ -1,8 +1,8 @@
 # File: ComfyUI-Suski-Prompt-Vault/py/routes.py
 """ComfyUI aiohttp Web 服务端路由控制模块。
 
-提供符合 aaalice-prompt-library v2 标准的词库全量读写、条目/组关系/分类/收藏夹 CRUD、
-多格式智能容错导入、单文件直接导出以及旧路由全量别名映射。
+提供符合 suski-prompt-library v1 标准的词库全量读写、条目/组关系/分类/收藏夹 CRUD、
+向下兼容旧格式智能容错导入、单文件直接导出以及旧路由全量别名映射。
 支持在数据变更时向所有连接的客户端推送 WebSocket 广播通知。
 """
 
@@ -214,7 +214,7 @@ def register_routes() -> None:
     # 6. 智能容错导入接口
     @routes.post("/prompt_vault/api/import")
     async def import_library_endpoint(request: web.Request) -> web.Response:
-        """导入 JSON 词库包。自动兼容 UTF-8 BOM、字典标准包与数组包。"""
+        """导入 JSON 词库包。自动兼容 UTF-8 BOM、旧版 aaalice 标准包及纯数组包。"""
         try:
             content_type = request.content_type or ""
             file_data: bytes = b""
@@ -244,8 +244,8 @@ def register_routes() -> None:
 
             if isinstance(imported_json, list):
                 imported_json = {
-                    "format": "aaalice-prompt-library",
-                    "version": 2,
+                    "format": "suski-prompt-library",
+                    "version": 1,
                     "categories": [],
                     "collections": [],
                     "tags": [],

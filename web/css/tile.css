@@ -221,7 +221,7 @@
     box-shadow: 0 0 5px currentColor;
 }
 
-/* 单体视图微型组跳转标记 */
+/* 词条视图微型组跳转标记 */
 .prompt-vault-group-indicator {
     display: inline-flex;
     align-items: center;
@@ -329,7 +329,7 @@
     font-size: 11px;
     font-family: var(--pv-font-mono);
     padding: 1px 5px;
-    border-radius: 3px;
+    border-radius: var(--pv-radius-pill);
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid var(--pv-border-subtle);
     color: var(--pv-text-secondary);
@@ -438,7 +438,23 @@
     border-radius: var(--pv-radius-md);
     margin-bottom: 5px;
     overflow: hidden;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    position: relative;
+}
+
+.prompt-vault-group-card.is-vault-selected {
+    border-color: var(--pv-accent-primary);
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.prompt-vault-group-card.is-vault-selected::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--pv-accent-primary);
 }
 
 .prompt-vault-group-card.is-target-glow {
@@ -468,6 +484,7 @@
     padding: 8px 10px;
     cursor: pointer;
     user-select: none;
+    transition: background 0.14s ease;
 }
 
 .prompt-vault-group-header:hover {
@@ -476,8 +493,20 @@
 
 .prompt-vault-group-chevron {
     color: var(--pv-text-muted);
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+
+.prompt-vault-group-chevron:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--pv-text-primary);
 }
 
 .prompt-vault-group-title-box {

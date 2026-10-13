@@ -3,7 +3,7 @@
 /**
  * 磁贴卡片（Tile）核心渲染组件。
  * 遵循归一化模型：普通词条与组员使用相同的数据渲染标准。
- * 支持单体视图微型组关联徽标与多组跳转菜单、手风琴二级磁贴轻量交互、
+ * 支持词条视图微型组关联徽标与多组跳转菜单、手风琴二级磁贴轻量交互、
  * 运行态单轨几何树状连线、微光锚点转角贴合卡片、连线悬停 160ms 防抖防闪烁、
  * 鼠标悬停时右侧浮现圆角胶囊操作条、100% 纯净矢量 SVG 图标（零 Emoji）。
  */
@@ -356,7 +356,7 @@ export function createTileElement({
     titleText.title = data.title || "";
     titleRow.appendChild(titleText);
 
-    // 单体视图：极简微型跳转标记
+    // 词条视图：极简微型跳转标记
     if (!isSelectedMode && Array.isArray(belongingGroups) && belongingGroups.length > 0) {
         const indicator = document.createElement("span");
         indicator.className = "prompt-vault-group-indicator";

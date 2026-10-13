@@ -19,13 +19,13 @@ DATA_DIR: Path = ROOT_DIR / "data"
 # 缩略图专用存储目录
 THUMBNAILS_DIR: Path = DATA_DIR / "thumbnails"
 
-# 统一词库持久化数据文件路径 (对齐 aaalice-prompt-library 标准)
+# 统一词库持久化数据文件路径
 LIBRARY_FILE: Path = DATA_DIR / "library.json"
 
 # 初始种子库骨架数据
 DEFAULT_LIBRARY: Dict[str, Any] = {
-    "format": "aaalice-prompt-library",
-    "version": 2,
+    "format": "suski-prompt-library",
+    "version": 1,
     "categories": [
         {
             "id": "50a0ed4b-59f3-4226-b79d-416023562d99",

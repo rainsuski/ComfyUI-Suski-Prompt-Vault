@@ -1,9 +1,9 @@
 /* File: ComfyUI-Suski-Prompt-Vault/web/js/components/modals/group_modal.js */
 
 /**
- * 存为提示词组（SaveGroupModalManager）弹窗管理器。
+ * 存为提示词组 / 编辑提示词组（SaveGroupModalManager）弹窗管理器。
  * 遵循归一化模型：组合仅维护 entryIds 关联清单。
- * 针对中栏未入库的临时磁贴，严格执行全库重名检测阻止，并自动持久化生成 entry 后绑定组合。
+ * 支持新建组合（带未入库临时条目自动持久化检测）与既有组合元数据（名称、分类）在线编辑。
  */
 
 import { upsertEntry, upsertGroup } from "../../api.js";
@@ -22,6 +22,11 @@ export class SaveGroupModalManager {
         this.overlay = null;
     }
 
+    /**
+     * 打开新建组合弹窗（由中栏多选选定磁贴打包）
+     * @param {any[]} selectedTiles
+     * @param {import("../../state.js").VaultNodeState|null} state
+     */
     open(selectedTiles = [], state = null) {
         this.close();
 
@@ -110,7 +115,7 @@ export class SaveGroupModalManager {
 
         document.body.appendChild(this.overlay);
 
-        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-modal-close") || this.overlay.querySelector(".prompt-vault-modal-close");
+        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
         const cancelBtn = this.overlay.querySelector("#pv-group-cancel");
         const submitBtn = this.overlay.querySelector("#pv-group-submit");
         const titleInput = this.overlay.querySelector("#pv-group-title");
@@ -212,6 +217,153 @@ export class SaveGroupModalManager {
                 if (submitBtn) {
                     submitBtn.disabled = false;
                     submitBtn.textContent = "确认并入库";
+                }
+            }
+        });
+    }
+
+    /**
+     * 打开编辑组合弹窗（由左栏组合视图触发，编辑组合名称与所属分类）
+     * @param {any} group
+     */
+    openEdit(group) {
+        this.close();
+
+        if (!group || !group.id) {
+            return;
+        }
+
+        const rawLib = typeof this.getLibrary === "function" ? this.getLibrary() : {};
+        const lib = Array.isArray(rawLib) ? { categories: rawLib, entries: [], groups: [] } : (rawLib || {});
+        const categories = lib.categories || [];
+        const existingEntries = lib.entries || [];
+        const existingGroups = lib.groups || [];
+        const categoryOptions = buildCategoryHierarchyOptions(categories);
+
+        const memberEntryIds = Array.isArray(group.entryIds) ? group.entryIds : [];
+        const memberEntries = memberEntryIds
+            .map((id) => existingEntries.find((e) => e.id === id))
+            .filter(Boolean);
+
+        this.overlay = document.createElement("div");
+        this.overlay.className = "prompt-vault-modal-overlay";
+        isolateCanvasEvents(this.overlay);
+
+        this.overlay.innerHTML = `
+      <div class="prompt-vault-modal pv-modal-medium" style="max-width: 540px;">
+        <div class="prompt-vault-modal-header">
+          <div class="prompt-vault-modal-title">编辑提示词组</div>
+          <button type="button" class="prompt-vault-modal-close" title="关闭">${renderIcon("x", 16)}</button>
+        </div>
+        <div class="prompt-vault-modal-body">
+          <div class="prompt-vault-form-row">
+            <div class="prompt-vault-form-col">
+              <label class="prompt-vault-form-label">组合名称 *</label>
+              <input
+                type="text"
+                class="prompt-vault-form-input"
+                id="pv-edit-group-title"
+                value="${group.title || ""}"
+                placeholder="输入组合名称..."
+                autofocus
+                autocomplete="off"
+              />
+            </div>
+            <div class="prompt-vault-form-col">
+              <label class="prompt-vault-form-label">所属分类</label>
+              <select class="prompt-vault-form-select" id="pv-edit-group-category">
+                ${categoryOptions.map((opt) => `<option value="${opt.id}" ${opt.id === group.categoryId ? "selected" : ""}>${opt.label}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+
+          <div class="prompt-vault-form-col">
+            <label class="prompt-vault-form-label">包含组员序列 (共 ${memberEntries.length} 项)</label>
+            <div class="prompt-vault-group-preview-list" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid var(--pv-border-subtle); border-radius: var(--pv-radius-sm); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;">
+              ${memberEntries.length === 0
+                ? `<div style="font-size: 11px; color: var(--pv-text-muted); text-align: center; padding: 12px 0;">该组合暂无成员词条</div>`
+                : memberEntries.map((entry, idx) => `
+                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; gap: 8px;">
+                  <span style="color: var(--pv-text-secondary); font-family: var(--pv-font-mono); font-size: 11px;">#${idx + 1}</span>
+                  <span style="color: var(--pv-text-primary); font-weight: 500; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${entry.title || "未命名词条"}</span>
+                  <span style="color: var(--pv-text-muted); font-size: 11px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${(entry.text || entry.prompt || "").replace(/[\r\n]+/g, " ")}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+        <div class="prompt-vault-modal-footer">
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-edit-group-cancel">取消</button>
+          <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-edit-group-submit">
+            ${renderIcon("check", 12)} <span>保存修改</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+        document.body.appendChild(this.overlay);
+
+        const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
+        const cancelBtn = this.overlay.querySelector("#pv-edit-group-cancel");
+        const submitBtn = this.overlay.querySelector("#pv-edit-group-submit");
+        const titleInput = this.overlay.querySelector("#pv-edit-group-title");
+        const categorySelect = this.overlay.querySelector("#pv-edit-group-category");
+
+        const handleClose = () => this.close();
+        if (closeBtn) closeBtn.addEventListener("click", handleClose);
+        cancelBtn.addEventListener("click", handleClose);
+        this.overlay.addEventListener("click", (e) => {
+            if (e.target === this.overlay) handleClose();
+        });
+
+        submitBtn.addEventListener("click", async () => {
+            const newTitle = (titleInput.value || "").trim();
+            const categoryId = categorySelect.value || null;
+
+            if (!newTitle) {
+                alert("组合名称不能为空！");
+                titleInput.focus();
+                return;
+            }
+
+            const cleanTargetTitle = newTitle.toLowerCase();
+            const duplicateGroup = existingGroups.find(
+                (g) => g.id !== group.id && (g.title || "").trim().toLowerCase() === cleanTargetTitle
+            );
+            if (duplicateGroup) {
+                alert(`词库中已存在同名组合 [${duplicateGroup.title}]，请更换名称！`);
+                titleInput.focus();
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = "保存中...";
+
+            try {
+                const groupPayload = {
+                    id: group.id,
+                    title: newTitle,
+                    categoryId: categoryId === "ALL" ? null : categoryId,
+                    entryIds: memberEntryIds,
+                    note: group.note || "",
+                };
+
+                const res = await upsertGroup(groupPayload);
+                if (res && res.success) {
+                    if (typeof this.onSaved === "function") {
+                        await this.onSaved();
+                    }
+                    this.close();
+                } else {
+                    alert(`更新组合失败: ${res?.error || "服务未响应"}`);
+                }
+            } catch (err) {
+                console.error("[PromptVault] Error updating group:", err);
+                alert(`更新组合异常: ${String(err)}`);
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "保存修改";
                 }
             }
         });
