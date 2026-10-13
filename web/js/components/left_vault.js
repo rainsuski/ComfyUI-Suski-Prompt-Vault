@@ -2,9 +2,8 @@
 
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
- * 提供分类与收藏夹双下拉联动筛选、多维度即时检索、
- * 分类与收藏夹全功能管理入口、磁贴单击选择/反选，
- * 并将导入与导出全面改造为具备预检和预览的专业弹窗交互。
+ * 提供分类与收藏夹双下拉联动筛选、组合模板与普通词条自动识别装配、
+ * 多维度即时检索、分类管理与导入导出弹窗唤起。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
@@ -128,7 +127,6 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(manageTaxonomyBtn);
 
-        // 导入按钮：唤起导入预检与冲突处理窗口
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
@@ -141,7 +139,6 @@ export class LeftVaultComponent {
         });
         btnGroup.appendChild(importBtn);
 
-        // 导出按钮：唤起导出预览弹窗
         const exportBtn = document.createElement("button");
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
@@ -282,7 +279,15 @@ export class LeftVaultComponent {
 
             if (this.searchKeyword) {
                 const titleMatch = (item.title || "").toLowerCase().includes(this.searchKeyword);
-                const textMatch = (item.text || item.prompt || "").toLowerCase().includes(this.searchKeyword);
+                let textMatch = (item.text || item.prompt || "").toLowerCase().includes(this.searchKeyword);
+
+                if (!textMatch && (Array.isArray(item.groupMembers) || Array.isArray(item.members))) {
+                    const members = item.groupMembers || item.members;
+                    textMatch = members.some((m) =>
+                        (m.title || "").toLowerCase().includes(this.searchKeyword) ||
+                        (m.text || m.prompt || "").toLowerCase().includes(this.searchKeyword)
+                    );
+                }
 
                 const itemTagIds = Array.isArray(item.tagIds) ? item.tagIds : [];
                 const tagMatch = itemTagIds.some((tid) => {

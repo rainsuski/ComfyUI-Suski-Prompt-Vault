@@ -2,9 +2,9 @@
 
 /**
  * 磁贴卡片（Tile）核心渲染组件。
- * 对齐 aaalice-prompt-library v2 数据标准（text、categoryId、previewHash、tagIds），
- * 提供词库单击即选/反选与高亮包裹框、悬浮删除确认弹窗、只读滚轮权重微调（0.1步长）、
- * 分类色彩动态徽章及鼠标延时悬浮详情预览弹窗。
+ * 对齐 aaalice-prompt-library v2 数据标准，
+ * 支持单轨几何树状连线、微光锚点转角、Shift 多选防焦点切换、
+ * 批量拖拽打包、组员常态呼吸圆点、词库组合模板徽章、词库点击整组反选与延时悬浮详情预览。
  */
 
 import { getThumbnailUrl } from "../api.js";
@@ -26,20 +26,12 @@ function removeActivePopover() {
     activePopoverElement = null;
 }
 
-/**
- * 渲染悬浮详情预览气泡。
- * @param {HTMLElement} targetTile
- * @param {any} data
- * @param {any[]} categories
- * @param {any[]} tagsDict
- */
 function showPopover(targetTile, data, categories, tagsDict) {
     removeActivePopover();
 
     const popover = document.createElement("div");
     popover.className = "prompt-vault-popover";
 
-    // 1. 头部行（标题 + 分类标签）
     const header = document.createElement("div");
     header.className = "prompt-vault-popover-header";
 
@@ -48,24 +40,33 @@ function showPopover(targetTile, data, categories, tagsDict) {
     title.textContent = data.title || "未命名词条";
     header.appendChild(title);
 
-    const matchedCat = categories.find(
-        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
-    );
+    const isGroup = (Array.isArray(data.groupMembers) && data.groupMembers.length > 0) ||
+        (Array.isArray(data.members) && data.members.length > 0);
 
-    if (matchedCat) {
-        const badge = document.createElement("span");
-        badge.className = "prompt-vault-tile-badge";
-        badge.textContent = matchedCat.name;
-        if (matchedCat.color) {
-            badge.style.backgroundColor = `${matchedCat.color}22`;
-            badge.style.color = matchedCat.color;
-            badge.style.borderColor = `${matchedCat.color}44`;
+    if (isGroup) {
+        const groupBadge = document.createElement("span");
+        groupBadge.className = "prompt-vault-tile-group-badge";
+        const memberCount = (data.groupMembers || data.members).length;
+        groupBadge.textContent = `组合模板 (${memberCount} 项)`;
+        header.appendChild(groupBadge);
+    } else {
+        const matchedCat = categories.find(
+            (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+        );
+        if (matchedCat) {
+            const badge = document.createElement("span");
+            badge.className = "prompt-vault-tile-badge";
+            badge.textContent = matchedCat.name;
+            if (matchedCat.color) {
+                badge.style.backgroundColor = `${matchedCat.color}22`;
+                badge.style.color = matchedCat.color;
+                badge.style.borderColor = `${matchedCat.color}44`;
+            }
+            header.appendChild(badge);
         }
-        header.appendChild(badge);
     }
     popover.appendChild(header);
 
-    // 2. 预览图展示
     const thumbPath = data.previewHash || data.thumbnail;
     if (thumbPath) {
         const previewBox = document.createElement("div");
@@ -77,21 +78,32 @@ function showPopover(targetTile, data, categories, tagsDict) {
         popover.appendChild(previewBox);
     }
 
-    // 3. 提示词完整内容 (text 或 prompt)
-    const promptContent = data.text || data.prompt || "";
-    if (promptContent) {
-        const promptLabel = document.createElement("div");
-        promptLabel.className = "prompt-vault-popover-section-label";
-        promptLabel.textContent = "提示词";
-        popover.appendChild(promptLabel);
+    if (isGroup) {
+        const memberLabel = document.createElement("div");
+        memberLabel.className = "prompt-vault-popover-section-label";
+        memberLabel.textContent = "包含组员定义";
+        popover.appendChild(memberLabel);
 
-        const promptText = document.createElement("div");
-        promptText.className = "prompt-vault-popover-prompt";
-        promptText.textContent = promptContent;
-        popover.appendChild(promptText);
+        const listContainer = document.createElement("div");
+        listContainer.className = "prompt-vault-popover-prompt";
+        const members = data.groupMembers || data.members;
+        listContainer.textContent = members.map((m, i) => `${i + 1}. [${m.title}] ${m.text || m.prompt}`).join("\n");
+        popover.appendChild(listContainer);
+    } else {
+        const promptContent = data.text || data.prompt || "";
+        if (promptContent) {
+            const promptLabel = document.createElement("div");
+            promptLabel.className = "prompt-vault-popover-section-label";
+            promptLabel.textContent = "提示词";
+            popover.appendChild(promptLabel);
+
+            const promptText = document.createElement("div");
+            promptText.className = "prompt-vault-popover-prompt";
+            promptText.textContent = promptContent;
+            popover.appendChild(promptText);
+        }
     }
 
-    // 4. 标签列表解析 (根据 tagIds 查字典或直接读取 tags)
     const tagIds = Array.isArray(data.tagIds) ? data.tagIds : [];
     const directTags = Array.isArray(data.tags) ? data.tags : [];
     const tagNames = [];
@@ -140,50 +152,100 @@ function showPopover(targetTile, data, categories, tagsDict) {
     popover.style.top = `${top}px`;
 }
 
-/**
- * 创建磁贴卡片 DOM 节点。
- * @param {Object} options
- * @param {any} options.data - 磁贴数据对象（标准 entry 实体或已选实例）
- * @param {"vault"|"selected"} options.mode - 展示模式
- * @param {import("../state.js").VaultNodeState} options.state - 节点状态机
- * @param {boolean} [options.isActive=false] - 是否激活编辑
- * @param {boolean} [options.isAlreadyAdded=false] - 是否已选
- * @param {any[]} [options.categories=[]] - 分类元数据树
- * @param {any[]} [options.tagsDict=[]] - 标签字典
- * @param {(entry: any) => void} [options.onToggleFavorite] - 收藏回调
- * @param {(entry: any) => void} [options.onDeleteEntry] - 词条删除二次确认回调
- * @returns {HTMLElement} 磁贴卡片元素
- */
+function createTrackElement(trackRole) {
+    const track = document.createElement("div");
+    track.className = "prompt-vault-tile-track";
+
+    if (trackRole === "none") {
+        return track;
+    }
+
+    if (trackRole === "first") {
+        const vBottom = document.createElement("div");
+        vBottom.className = "prompt-vault-track-v-bottom";
+        const hBranch = document.createElement("div");
+        hBranch.className = "prompt-vault-track-h-branch";
+        const anchor = document.createElement("div");
+        anchor.className = "prompt-vault-track-dot-anchor";
+
+        track.appendChild(vBottom);
+        track.appendChild(hBranch);
+        track.appendChild(anchor);
+    } else if (trackRole === "branch") {
+        const vFull = document.createElement("div");
+        vFull.className = "prompt-vault-track-v-full";
+        const hBranch = document.createElement("div");
+        hBranch.className = "prompt-vault-track-h-branch";
+        const anchor = document.createElement("div");
+        anchor.className = "prompt-vault-track-dot-anchor";
+
+        track.appendChild(vFull);
+        track.appendChild(hBranch);
+        track.appendChild(anchor);
+    } else if (trackRole === "last") {
+        const vTop = document.createElement("div");
+        vTop.className = "prompt-vault-track-v-top";
+        const hBranch = document.createElement("div");
+        hBranch.className = "prompt-vault-track-h-branch";
+        const anchor = document.createElement("div");
+        anchor.className = "prompt-vault-track-dot-anchor";
+
+        track.appendChild(vTop);
+        track.appendChild(hBranch);
+        track.appendChild(anchor);
+    } else if (trackRole === "pass") {
+        track.classList.add("prompt-vault-track-pass");
+        const vFull = document.createElement("div");
+        vFull.className = "prompt-vault-track-v-full";
+        track.appendChild(vFull);
+    }
+
+    return track;
+}
+
 export function createTileElement({
     data,
     mode,
     state,
     isActive = false,
     isAlreadyAdded = false,
+    isMultiSelected = false,
     categories = [],
     tagsDict = [],
     onToggleFavorite,
     onDeleteEntry,
+    trackRole = "none",
+    groupColor = null,
+    isGroupActiveMember = false,
 }) {
     const isSelectedMode = mode === "selected";
     const instanceId = isSelectedMode ? data.instance_id : null;
     const isMuted = isSelectedMode && data.enabled === false;
     const isDirty = isSelectedMode && Boolean(data.is_dirty);
+    const hasGroup = Boolean(data.group_id);
 
-    // 1. 卡片外层容器
+    const isVaultGroupTemplate = !isSelectedMode && (
+        (Array.isArray(data.groupMembers) && data.groupMembers.length > 0) ||
+        (Array.isArray(data.members) && data.members.length > 0)
+    );
+
     const tile = document.createElement("div");
     tile.className = "prompt-vault-tile";
     if (isActive) tile.classList.add("is-active");
+    if (isMultiSelected) tile.classList.add("is-multi-selected");
     if (isMuted) tile.classList.add("is-muted");
     if (!isSelectedMode && isAlreadyAdded) tile.classList.add("is-vault-selected");
+    if (isGroupActiveMember) tile.classList.add("is-group-active-member");
 
     tile.dataset.mode = mode;
     if (instanceId) tile.dataset.instanceId = instanceId;
 
     isolateCanvasEvents(tile);
 
-    // 悬停延迟展示预览气泡
     tile.addEventListener("mouseenter", () => {
+        if (isSelectedMode && data.group_id) {
+            state.setHoveredGroupId(data.group_id);
+        }
         if (activePopoverTimer) clearTimeout(activePopoverTimer);
         activePopoverTimer = setTimeout(() => {
             showPopover(tile, data, categories, tagsDict);
@@ -191,27 +253,43 @@ export function createTileElement({
     });
 
     tile.addEventListener("mouseleave", () => {
+        if (isSelectedMode && data.group_id) {
+            state.setHoveredGroupId(null);
+        }
         removeActivePopover();
     });
 
-    // 点击卡片交互
     tile.addEventListener("click", (event) => {
         removeActivePopover();
         if (event.target.closest(".prompt-vault-tile-actions")) return;
 
         if (isSelectedMode) {
-            state.setActiveTile(instanceId);
-        } else {
-            const existing = state.selectedTiles.find((t) => t.ref_preset_id === data.id);
-            if (existing) {
-                state.removeTile(existing.instance_id);
+            if (event.shiftKey) {
+                state.toggleMultiSelect(instanceId);
             } else {
-                state.addTileFromEntry(data, categories);
+                state.setActiveTile(instanceId);
+            }
+        } else {
+            if (isVaultGroupTemplate) {
+                const existingGroupMember = state.selectedTiles.find(
+                    (t) => t.ref_preset_id === data.id
+                );
+                if (existingGroupMember) {
+                    state.removeGroupByPresetId(data.id);
+                } else {
+                    state.addGroupFromEntry(data, categories);
+                }
+            } else {
+                const existing = state.selectedTiles.find((t) => t.ref_preset_id === data.id);
+                if (existing) {
+                    state.removeTile(existing.instance_id);
+                } else {
+                    state.addTileFromEntry(data, categories);
+                }
             }
         }
     });
 
-    // 2. 缩略图区域
     const thumbBox = document.createElement("div");
     thumbBox.className = "prompt-vault-tile-thumb";
     const thumbPath = data.previewHash || data.thumbnail;
@@ -229,12 +307,20 @@ export function createTileElement({
     }
     tile.appendChild(thumbBox);
 
-    // 3. 信息区域
     const infoBox = document.createElement("div");
     infoBox.className = "prompt-vault-tile-info";
 
     const titleRow = document.createElement("div");
     titleRow.className = "prompt-vault-tile-title-row";
+
+    if (isSelectedMode && hasGroup && data.group_color) {
+        const dot = document.createElement("span");
+        dot.className = "prompt-vault-tile-group-dot";
+        dot.style.color = data.group_color;
+        dot.style.backgroundColor = data.group_color;
+        dot.title = data.group_title ? `所属组合：${data.group_title}` : "组合成员";
+        titleRow.appendChild(dot);
+    }
 
     const titleText = document.createElement("span");
     titleText.className = "prompt-vault-tile-title";
@@ -242,20 +328,27 @@ export function createTileElement({
     titleText.title = data.title || "";
     titleRow.appendChild(titleText);
 
-    // 解析并渲染分类胶囊 Badge 与色彩
-    const matchedCat = categories.find(
-        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
-    );
-    if (matchedCat) {
-        const catBadge = document.createElement("span");
-        catBadge.className = "prompt-vault-tile-badge";
-        catBadge.textContent = matchedCat.name;
-        if (matchedCat.color) {
-            catBadge.style.backgroundColor = `${matchedCat.color}22`;
-            catBadge.style.color = matchedCat.color;
-            catBadge.style.borderColor = `${matchedCat.color}44`;
+    if (isVaultGroupTemplate) {
+        const groupBadge = document.createElement("span");
+        groupBadge.className = "prompt-vault-tile-group-badge";
+        const count = (data.groupMembers || data.members).length;
+        groupBadge.textContent = `组合 (${count})`;
+        titleRow.appendChild(groupBadge);
+    } else {
+        const matchedCat = categories.find(
+            (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+        );
+        if (matchedCat) {
+            const catBadge = document.createElement("span");
+            catBadge.className = "prompt-vault-tile-badge";
+            catBadge.textContent = matchedCat.name;
+            if (matchedCat.color) {
+                catBadge.style.backgroundColor = `${matchedCat.color}22`;
+                catBadge.style.color = matchedCat.color;
+                catBadge.style.borderColor = `${matchedCat.color}44`;
+            }
+            titleRow.appendChild(catBadge);
         }
-        titleRow.appendChild(catBadge);
     }
 
     if (isDirty) {
@@ -268,16 +361,20 @@ export function createTileElement({
 
     const snippet = document.createElement("div");
     snippet.className = "prompt-vault-tile-snippet";
-    const promptText = data.text || data.prompt || "";
-    snippet.textContent = promptText.replace(/[\r\n]+/g, " ");
+    let promptSnippetText = "";
+    if (isVaultGroupTemplate) {
+        const members = data.groupMembers || data.members;
+        promptSnippetText = members.map((m) => m.title).join(" / ");
+    } else {
+        promptSnippetText = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
+    }
+    snippet.textContent = promptSnippetText;
     infoBox.appendChild(snippet);
     tile.appendChild(infoBox);
 
-    // 4. 右侧 Hover 操作栏
     const actionsBar = document.createElement("div");
     actionsBar.className = "prompt-vault-tile-actions";
 
-    // 4.1 权重微调器（已选列表）
     if (isSelectedMode) {
         const weightBadge = document.createElement("div");
         weightBadge.className = "prompt-vault-tile-weight";
@@ -308,14 +405,13 @@ export function createTileElement({
         actionsBar.appendChild(muteBtn);
     }
 
-    // 4.2 收藏按钮（词库模式）
     if (!isSelectedMode) {
         const isFavorited = (Array.isArray(data.collections) && data.collections.length > 0) || Boolean(data.favorite);
         const starBtn = document.createElement("button");
         starBtn.type = "button";
         starBtn.className = "prompt-vault-tile-btn";
         if (isFavorited) starBtn.classList.add("is-starred");
-        starBtn.title = isFavorited ? "已收藏 (点击取消或移动)" : "加入收藏夹";
+        starBtn.title = isFavorited ? "已收藏" : "加入收藏夹";
         starBtn.innerHTML = renderIcon(isFavorited ? "starFilled" : "star", 13);
         starBtn.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -327,7 +423,6 @@ export function createTileElement({
         actionsBar.appendChild(starBtn);
     }
 
-    // 4.3 复制 Prompt
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "prompt-vault-tile-btn";
@@ -336,7 +431,10 @@ export function createTileElement({
     copyBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
-            await navigator.clipboard.writeText(promptText);
+            const copyContent = isVaultGroupTemplate
+                ? (data.groupMembers || data.members).map((m) => m.text || m.prompt || "").join(", ")
+                : (data.text || data.prompt || "");
+            await navigator.clipboard.writeText(copyContent);
             copyBtn.innerHTML = renderIcon("check", 13);
             setTimeout(() => {
                 copyBtn.innerHTML = renderIcon("copy", 13);
@@ -347,7 +445,6 @@ export function createTileElement({
     });
     actionsBar.appendChild(copyBtn);
 
-    // 4.4 词库模式专属：从库中删除词条
     if (!isSelectedMode) {
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
@@ -364,12 +461,11 @@ export function createTileElement({
         actionsBar.appendChild(deleteBtn);
     }
 
-    // 4.5 中栏模式专属：移出已选
     if (isSelectedMode) {
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "prompt-vault-tile-btn is-danger";
-        removeBtn.title = "移出已选列表";
+        removeBtn.title = hasGroup ? "移除该组合 (原子整组移除)" : "移出已选列表";
         removeBtn.innerHTML = renderIcon("x", 13);
         removeBtn.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -381,59 +477,106 @@ export function createTileElement({
 
     tile.appendChild(actionsBar);
 
-    // 5. HTML5 拖拽排序逻辑
-    if (isSelectedMode) {
-        tile.setAttribute("draggable", "true");
-        isolateDragEvents(tile);
+    if (!isSelectedMode) {
+        return tile;
+    }
 
-        tile.addEventListener("dragstart", (event) => {
-            removeActivePopover();
-            tile.classList.add("is-dragging");
-            if (event.dataTransfer) {
-                event.dataTransfer.effectAllowed = "move";
+    const row = document.createElement("div");
+    row.className = "prompt-vault-tile-row";
+    row.dataset.instanceId = instanceId;
+
+    if (groupColor) {
+        row.style.setProperty("--pv-group-color", groupColor);
+        row.style.setProperty("--pv-group-glow", `${groupColor}44`);
+    }
+
+    const trackElement = createTrackElement(trackRole);
+    row.appendChild(trackElement);
+    row.appendChild(tile);
+
+    row.setAttribute("draggable", "true");
+    isolateDragEvents(row);
+
+    row.addEventListener("dragstart", (event) => {
+        removeActivePopover();
+        row.classList.add("is-dragging");
+        tile.classList.add("is-dragging");
+
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+
+            if (state.isMultiSelected(instanceId) && state.multiSelectedIds.size > 1) {
+                const batchPayload = JSON.stringify({
+                    type: "batch_move",
+                    ids: Array.from(state.multiSelectedIds),
+                });
+                event.dataTransfer.setData("application/json", batchPayload);
+                event.dataTransfer.setData("text/plain", instanceId);
+            } else {
                 event.dataTransfer.setData("text/plain", instanceId);
             }
-        });
+        }
+    });
 
-        tile.addEventListener("dragend", () => {
-            tile.classList.remove("is-dragging");
-        });
+    row.addEventListener("dragend", () => {
+        row.classList.remove("is-dragging");
+        tile.classList.remove("is-dragging");
+    });
 
-        tile.addEventListener("dragover", (event) => {
-            event.preventDefault();
-            if (event.dataTransfer) {
-                event.dataTransfer.dropEffect = "move";
-            }
-            const rect = tile.getBoundingClientRect();
-            const midY = rect.top + rect.height / 2;
-            if (event.clientY < midY) {
-                tile.classList.add("drag-over-top");
-                tile.classList.remove("drag-over-bottom");
-            } else {
-                tile.classList.add("drag-over-bottom");
-                tile.classList.remove("drag-over-top");
-            }
-        });
+    row.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = "move";
+        }
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (event.clientY < midY) {
+            row.classList.add("drag-over-top");
+            row.classList.remove("drag-over-bottom");
+        } else {
+            row.classList.add("drag-over-bottom");
+            row.classList.remove("drag-over-top");
+        }
+    });
 
-        tile.addEventListener("dragleave", () => {
-            tile.classList.remove("drag-over-top", "drag-over-bottom");
-        });
+    row.addEventListener("dragleave", () => {
+        row.classList.remove("drag-over-top", "drag-over-bottom");
+    });
 
-        tile.addEventListener("drop", (event) => {
-            event.preventDefault();
-            tile.classList.remove("drag-over-top", "drag-over-bottom");
-            if (!event.dataTransfer) return;
+    row.addEventListener("drop", (event) => {
+        event.preventDefault();
+        row.classList.remove("drag-over-top", "drag-over-bottom");
+        if (!event.dataTransfer) return;
 
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const position = event.clientY < midY ? "before" : "after";
+
+        let batchData = null;
+        try {
+            const rawJson = event.dataTransfer.getData("application/json");
+            if (rawJson) batchData = JSON.parse(rawJson);
+        } catch (err) {
+            batchData = null;
+        }
+
+        if (batchData && batchData.type === "batch_move" && Array.isArray(batchData.ids)) {
+            state.reorderTilesBatch(batchData.ids, instanceId, position);
+        } else {
             const sourceId = event.dataTransfer.getData("text/plain");
             if (!sourceId || sourceId === instanceId) return;
 
-            const fromIndex = state.selectedTiles.findIndex((t) => t.instance_id === sourceId);
-            const toIndex = state.selectedTiles.findIndex((t) => t.instance_id === instanceId);
-            if (fromIndex !== -1 && toIndex !== -1) {
-                state.reorderTiles(fromIndex, toIndex);
+            if (state.isMultiSelected(sourceId) && state.multiSelectedIds.size > 1) {
+                state.reorderTilesBatch(Array.from(state.multiSelectedIds), instanceId, position);
+            } else {
+                const fromIndex = state.selectedTiles.findIndex((t) => t.instance_id === sourceId);
+                const toIndex = state.selectedTiles.findIndex((t) => t.instance_id === instanceId);
+                if (fromIndex !== -1 && toIndex !== -1) {
+                    state.reorderTiles(fromIndex, toIndex);
+                }
             }
-        });
-    }
+        }
+    });
 
-    return tile;
+    return row;
 }

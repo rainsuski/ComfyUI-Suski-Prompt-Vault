@@ -83,7 +83,6 @@ app.registerExtension({
     async setup() {
         await refreshGlobalData();
 
-        // 监听服务端 WebSocket 词库变更广播，实时驱动所有画布节点刷新
         api.addEventListener("prompt_vault:library_updated", async () => {
             await notifyAllNodesRefresh();
         });
@@ -110,7 +109,6 @@ app.registerExtension({
             node._vaultState = state;
             activeNodeStates.add(state);
 
-            // 监听节点销毁，释放状态引用
             const origOnRemoved = node.onRemoved;
             node.onRemoved = function () {
                 activeNodeStates.delete(state);
@@ -152,7 +150,6 @@ app.registerExtension({
                 await notifyAllNodesRefresh();
             };
 
-            // 实例化全套专业弹窗管理器
             const presetModalManager = new PresetModalManager(
                 () => globalLibrary,
                 notifyRefresh
@@ -181,7 +178,6 @@ app.registerExtension({
                 () => globalLibrary
             );
 
-            // 隐藏的 JSON 文件选择器
             const importInput = document.createElement("input");
             importInput.type = "file";
             importInput.accept = ".json";
@@ -205,7 +201,7 @@ app.registerExtension({
             });
             container.appendChild(importInput);
 
-            // 挂载左栏组件（接入导入预检处理与导出统计预览）
+            // 挂载左栏组件
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -218,19 +214,21 @@ app.registerExtension({
                 () => exportModalManager.open()
             );
 
-            // 挂载中栏组件
+            // 挂载中栏组件 (传递词条草稿另存回调与全局刷新回调)
             new MiddleSelectedComponent(
                 colMiddle,
                 state,
                 () => globalLibrary.categories || [],
                 (tileDraft) => {
+                    if (!tileDraft) return;
                     presetModalManager.open({
                         title: tileDraft.title,
                         text: tileDraft.prompt,
                         categoryId: tileDraft.category_id,
                         previewHash: tileDraft.thumbnail,
                     });
-                }
+                },
+                notifyRefresh
             );
 
             // 挂载右栏组件
@@ -240,6 +238,7 @@ app.registerExtension({
                 () => globalLibrary.entries || [],
                 () => globalLibrary.categories || [],
                 (tileDraft) => {
+                    if (!tileDraft) return;
                     presetModalManager.open({
                         id: tileDraft.ref_preset_id || undefined,
                         title: tileDraft.title,

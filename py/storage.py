@@ -2,7 +2,8 @@
 """数据持久化与安全读写存储模块。
 
 基于 aaalice-prompt-library v2 标准数据模型实现统一单文件管理，
-提供线程安全的原子写入、分类树与子级级联/提升、标签映射及词条 CRUD 操作。
+提供线程安全的原子写入、分类树与子级级联/提升、标签映射、
+组合模板组员持久化及词条 CRUD 操作。
 """
 
 import json
@@ -84,7 +85,7 @@ class StorageManager:
     def upsert_entry(
         self, entry_payload: Dict[str, Any]
     ) -> Tuple[bool, Dict[str, Any]]:
-        """新增或更新提示词条目。"""
+        """新增或更新提示词条目，支持单项词条与组合模板成员持久化。"""
         with self._lock:
             lib = self._read_library()
             entries: List[Dict[str, Any]] = lib.setdefault("entries", [])
@@ -108,7 +109,7 @@ class StorageManager:
                     if tags_map[clean_name] not in tag_ids:
                         tag_ids.append(tags_map[clean_name])
 
-            entry_item = {
+            entry_item: Dict[str, Any] = {
                 "id": target_id,
                 "title": entry_payload.get("title") or "未命名词条",
                 "text": entry_payload.get("text") or entry_payload.get("prompt") or "",
@@ -124,6 +125,22 @@ class StorageManager:
                 "tagIds": tag_ids,
                 "collections": entry_payload.get("collections") or [],
             }
+
+            raw_members = entry_payload.get("groupMembers") or entry_payload.get(
+                "members"
+            )
+            if isinstance(raw_members, list) and len(raw_members) > 0:
+                clean_members = []
+                for m in raw_members:
+                    if isinstance(m, dict):
+                        clean_members.append(
+                            {
+                                "title": m.get("title") or "组员",
+                                "text": m.get("text") or m.get("prompt") or "",
+                            }
+                        )
+                if clean_members:
+                    entry_item["groupMembers"] = clean_members
 
             found = False
             for idx, existing in enumerate(entries):

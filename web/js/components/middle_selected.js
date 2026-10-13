@@ -2,12 +2,14 @@
 
 /**
  * 中栏：已选提示词列表（Selected Prompts）组件。
- * 展示当前节点已选装配的磁贴序列、支持 HTML5 拖拽排序、
- * 快捷新增空词条、一键免确认清空与全量矢量图标呈现。
+ * 展示当前节点已选装配的磁贴序列、计算活跃聚焦组几何连线区间、
+ * 分配首支尾穿透单轨角色、呈现多选批量操作条、集成存为提示词组弹窗与词库刷新联动、
+ * 支持自由批量拖拽排序、快捷新增空词条与免确认清空。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
+import { SaveGroupModalManager } from "./modal.js";
 import { createTileElement } from "./tile.js";
 
 export class MiddleSelectedComponent {
@@ -15,22 +17,37 @@ export class MiddleSelectedComponent {
      * @param {HTMLElement} container - 中栏宿主 DOM 容器
      * @param {import("../state.js").VaultNodeState} state - 状态机实例
      * @param {() => any[]} getCategoriesConfigCallback - 获取分类元数据回调
-     * @param {(tileDraft: any) => void} onSaveToVaultCallback - 保存到词库回调
+     * @param {(tileDraft: any) => void} onSaveToVaultCallback - 单条草稿保存入库回调
+     * @param {() => Promise<void>} [onLibraryRefreshCallback] - 全局词库刷新回调
      */
-    constructor(container, state, getCategoriesConfigCallback, onSaveToVaultCallback) {
+    constructor(
+        container,
+        state,
+        getCategoriesConfigCallback,
+        onSaveToVaultCallback,
+        onLibraryRefreshCallback
+    ) {
         this.container = container;
         this.state = state;
         this.getCategoriesConfig = getCategoriesConfigCallback;
         this.onSaveToVault = onSaveToVaultCallback;
+        this.onLibraryRefresh = onLibraryRefreshCallback;
         this.searchKeyword = "";
+
+        // 初始化“存为提示词组”弹窗管理器，保存成功后安全通知刷新词库
+        this.groupModalManager = new SaveGroupModalManager(
+            () => ({ categories: this.getCategoriesConfig() }),
+            async () => {
+                if (typeof this.onLibraryRefresh === "function") {
+                    await this.onLibraryRefresh();
+                }
+            }
+        );
 
         this.initDOM();
         this.state.subscribe(() => this.renderList());
     }
 
-    /**
-     * 初始化中栏外层结构与头部工具栏。
-     */
     initDOM() {
         this.container.innerHTML = "";
 
@@ -38,7 +55,6 @@ export class MiddleSelectedComponent {
         const header = document.createElement("div");
         header.className = "prompt-vault-col-header";
 
-        // 标题行与新建空词条
         const titleBar = document.createElement("div");
         titleBar.className = "prompt-vault-header-title-bar";
 
@@ -76,14 +92,18 @@ export class MiddleSelectedComponent {
         header.appendChild(filterRow);
         this.container.appendChild(header);
 
-        // 2. 磁贴列表滚动视口
+        // 2. 批量操作挂载容器 (仅在 multiSelectedIds >= 2 时动态展现)
+        this.batchBarContainer = document.createElement("div");
+        this.container.appendChild(this.batchBarContainer);
+
+        // 3. 磁贴列表滚动视口
         this.listViewport = document.createElement("div");
         this.listViewport.className = "prompt-vault-list-viewport";
         isolateWheelScroll(this.listViewport);
         isolateCanvasEvents(this.listViewport);
         this.container.appendChild(this.listViewport);
 
-        // 3. 底部信息与即时清空操作条（免二次确认）
+        // 4. 底部信息与即时清空操作条
         this.footer = document.createElement("div");
         this.footer.className = "prompt-vault-col-footer";
 
@@ -98,7 +118,6 @@ export class MiddleSelectedComponent {
         clearBtn.innerHTML = `${renderIcon("trash", 12)} <span>清空已选</span>`;
         clearBtn.title = "立即清空全部已选磁贴";
         clearBtn.addEventListener("click", () => {
-            // 立即清空，无需二次确认弹窗
             this.state.clearAllTiles();
         });
         this.footer.appendChild(clearBtn);
@@ -108,13 +127,99 @@ export class MiddleSelectedComponent {
         this.renderList();
     }
 
-    /**
-     * 重新渲染已选磁贴列表。
-     */
+    renderBatchBar() {
+        const multiCount = this.state.multiSelectedIds.size;
+        this.batchBarContainer.innerHTML = "";
+
+        if (multiCount < 2) {
+            return;
+        }
+
+        const batchBar = document.createElement("div");
+        batchBar.className = "prompt-vault-batch-bar";
+
+        const leftSide = document.createElement("div");
+        leftSide.className = "prompt-vault-batch-bar-left";
+        leftSide.innerHTML = `${renderIcon("grid", 13)} <span>已选 ${multiCount} 项</span>`;
+        batchBar.appendChild(leftSide);
+
+        const rightSide = document.createElement("div");
+        rightSide.className = "prompt-vault-batch-bar-right";
+
+        const saveGroupBtn = document.createElement("button");
+        saveGroupBtn.type = "button";
+        saveGroupBtn.className = "prompt-vault-btn prompt-vault-btn-primary";
+        saveGroupBtn.style.height = "24px";
+        saveGroupBtn.style.padding = "0 8px";
+        saveGroupBtn.style.fontSize = "11px";
+        saveGroupBtn.innerHTML = `${renderIcon("folder", 11)} <span>存为提示词组</span>`;
+        saveGroupBtn.title = "将当前选中的磁贴序列就地打包存为组合模板";
+        saveGroupBtn.addEventListener("click", () => {
+            const selectedTiles = this.state.getMultiSelectedTiles();
+            this.groupModalManager.open(selectedTiles, this.state);
+        });
+        rightSide.appendChild(saveGroupBtn);
+
+        const batchDelBtn = document.createElement("button");
+        batchDelBtn.type = "button";
+        batchDelBtn.className = "prompt-vault-btn prompt-vault-btn-danger";
+        batchDelBtn.style.height = "24px";
+        batchDelBtn.style.padding = "0 6px";
+        batchDelBtn.style.fontSize = "11px";
+        batchDelBtn.innerHTML = `${renderIcon("trash", 11)} <span>删除所选</span>`;
+        batchDelBtn.title = "批量移除选中的磁贴";
+        batchDelBtn.addEventListener("click", () => {
+            this.state.removeMultiSelectedTiles();
+        });
+        rightSide.appendChild(batchDelBtn);
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "prompt-vault-btn prompt-vault-btn-default";
+        cancelBtn.style.height = "24px";
+        cancelBtn.style.padding = "0 6px";
+        cancelBtn.style.fontSize = "11px";
+        cancelBtn.innerHTML = renderIcon("x", 11);
+        cancelBtn.title = "取消多选";
+        cancelBtn.addEventListener("click", () => {
+            this.state.clearMultiSelect();
+        });
+        rightSide.appendChild(cancelBtn);
+
+        batchBar.appendChild(rightSide);
+        this.batchBarContainer.appendChild(batchBar);
+    }
+
     renderList() {
+        this.renderBatchBar();
+
         const tiles = this.state.selectedTiles;
+        const activeTile = this.state.getActiveTile();
         const activeTileId = this.state.activeInstanceId;
         const categoriesConfig = this.getCategoriesConfig();
+
+        const focusedGroupId = this.state.hoveredGroupId || (activeTile ? activeTile.group_id : null);
+
+        let groupMinIdx = -1;
+        let groupMaxIdx = -1;
+        let focusedGroupColor = null;
+
+        if (focusedGroupId) {
+            const memberIndices = [];
+            tiles.forEach((t, idx) => {
+                if (t.group_id === focusedGroupId) {
+                    memberIndices.push(idx);
+                    if (!focusedGroupColor && t.group_color) {
+                        focusedGroupColor = t.group_color;
+                    }
+                }
+            });
+
+            if (memberIndices.length > 0) {
+                groupMinIdx = Math.min(...memberIndices);
+                groupMaxIdx = Math.max(...memberIndices);
+            }
+        }
 
         const filtered = tiles.filter((tile) => {
             if (!this.searchKeyword) return true;
@@ -141,22 +246,48 @@ export class MiddleSelectedComponent {
       `;
         } else {
             filtered.forEach((tile) => {
+                const actualIndex = tiles.indexOf(tile);
                 const isActive = tile.instance_id === activeTileId;
-                const tileElement = createTileElement({
+                const isMultiSelected = this.state.isMultiSelected(tile.instance_id);
+                const isMemberOfFocusedGroup = Boolean(focusedGroupId && tile.group_id === focusedGroupId);
+
+                let trackRole = "none";
+                if (focusedGroupId && groupMinIdx !== -1 && groupMaxIdx !== -1) {
+                    if (actualIndex >= groupMinIdx && actualIndex <= groupMaxIdx) {
+                        if (actualIndex === groupMinIdx) {
+                            trackRole = "first";
+                        } else if (actualIndex === groupMaxIdx) {
+                            trackRole = "last";
+                        } else if (isMemberOfFocusedGroup) {
+                            trackRole = "branch";
+                        } else {
+                            trackRole = "pass";
+                        }
+                    }
+                }
+
+                const tileRowElement = createTileElement({
                     data: tile,
                     mode: "selected",
                     state: this.state,
                     isActive: isActive,
                     isAlreadyAdded: false,
-                    categoriesConfig: categoriesConfig,
+                    isMultiSelected: isMultiSelected,
+                    categories: categoriesConfig,
+                    tagsDict: [],
                     onToggleFavorite: null,
+                    onDeleteEntry: null,
+                    trackRole: trackRole,
+                    groupColor: focusedGroupColor || tile.group_color,
+                    isGroupActiveMember: isMemberOfFocusedGroup,
                 });
-                this.listViewport.appendChild(tileElement);
+                this.listViewport.appendChild(tileRowElement);
             });
         }
 
-        // 更新底部统计
         const enabledCount = tiles.filter((t) => t.enabled !== false).length;
-        this.statusText.textContent = `${enabledCount} 项启用 / 共 ${tiles.length} 项`;
+        const multiCount = this.state.multiSelectedIds.size;
+        const multiSuffix = multiCount > 0 ? ` (已多选 ${multiCount} 项)` : "";
+        this.statusText.textContent = `${enabledCount} 项启用 / 共 ${tiles.length} 项${multiSuffix}`;
     }
 }
