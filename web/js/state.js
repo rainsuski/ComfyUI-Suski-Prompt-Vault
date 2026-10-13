@@ -2,9 +2,9 @@
 
 /**
  * 节点内部响应式状态机与脏状态追踪模块。
- * 管理当前节点已选磁贴实例、组合模板导入、组合原子性删除（删任意组员整组移除）、
- * 词库组反选移除、Shift 多选保护（不切换焦点）、批量拖拽排序、批量删除、就地成组绑定、
- * 悬浮预览焦点通知、草稿暂存、跨平台换行符规范化脏标记比对与 Widget 序列化双向绑定。
+ * 管理当前节点已选磁贴实例、组合模板导入、组合原子性删除、
+ * 词库组反选移除、Shift 多选保护、批量拖拽排序、批量删除、就地成组绑定、
+ * 独立轻量悬浮预览监听通道（杜绝全量重绘闪烁）、草稿暂存、跨平台换行符规范化脏标记比对与 Widget 序列化双向绑定。
  */
 
 import { clampAndRoundWeight } from "./utils/prompt_format.js";
@@ -56,13 +56,25 @@ export class VaultNodeState {
         this.multiSelectedIds = new Set();
         /** @type {string|null} 鼠标悬停临时预览连线的组合 ID */
         this.hoveredGroupId = null;
-        /** @type {Set<Function>} 状态变更订阅者回调集合 */
+        /** @type {Set<Function>} 基础数据状态变更订阅者回调集合 */
         this.subscribers = new Set();
+        /** @type {Set<Function>} 轻量悬浮预览状态专用订阅者回调集合 */
+        this.hoverSubscribers = new Set();
     }
 
     subscribe(callback) {
         this.subscribers.add(callback);
         return () => this.subscribers.delete(callback);
+    }
+
+    /**
+     * 订阅仅限悬浮连线状态的轻量级微调更新。
+     * @param {Function} callback
+     * @returns {Function}
+     */
+    subscribeHover(callback) {
+        this.hoverSubscribers.add(callback);
+        return () => this.hoverSubscribers.delete(callback);
     }
 
     notify() {
@@ -153,14 +165,18 @@ export class VaultNodeState {
         return this.selectedTiles.filter((t) => this.multiSelectedIds.has(t.instance_id));
     }
 
+    /**
+     * 仅触发轻量悬浮通道通知，杜绝全量 DOM 重建与组件闪烁。
+     * @param {string|null} groupId
+     */
     setHoveredGroupId(groupId) {
         if (this.hoveredGroupId !== groupId) {
             this.hoveredGroupId = groupId;
-            this.subscribers.forEach((cb) => {
+            this.hoverSubscribers.forEach((cb) => {
                 try {
-                    cb(this);
+                    cb(this.hoveredGroupId);
                 } catch (err) {
-                    console.error("[PromptVault] Error in subscriber callback:", err);
+                    console.error("[PromptVault] Error in hover subscriber callback:", err);
                 }
             });
         }
@@ -289,10 +305,6 @@ export class VaultNodeState {
         this.notify();
     }
 
-    /**
-     * 删除指定磁贴。若该磁贴属于某个组合，则触发原子性删除，整组组员一并移除。
-     * @param {string} instanceId
-     */
     removeTile(instanceId) {
         const target = this.selectedTiles.find((t) => t.instance_id === instanceId);
         if (!target) return;
@@ -312,10 +324,6 @@ export class VaultNodeState {
         this.notify();
     }
 
-    /**
-     * 根据运行时组 ID 原子性整组移除。
-     * @param {string} groupId
-     */
     removeGroupById(groupId) {
         if (!groupId) return;
 
@@ -333,10 +341,6 @@ export class VaultNodeState {
         this.notify();
     }
 
-    /**
-     * 根据来源词库预设 ID 原子性整组移除已选列表中的对应成员。
-     * @param {string} presetId
-     */
     removeGroupByPresetId(presetId) {
         if (!presetId) return;
 

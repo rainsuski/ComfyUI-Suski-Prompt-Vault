@@ -2,7 +2,8 @@
 
 /**
  * 存为提示词组（SaveGroupModalManager）弹窗管理器。
- * 将中栏多选的提示词序列就地打包为包含 groupMembers 的持久化模板条目，
+ * 提供支持自输入与历史匹配的可输入下拉框（Combo Input），
+ * 自动识别单归属默认值，支持同名组合自动覆盖更新与新组合写入，
  * 完成本地词库持久化入库，回填条目 ID，联动状态机就地绑定高亮连线与异常安全防护。
  */
 
@@ -13,7 +14,7 @@ import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
 export class SaveGroupModalManager {
     /**
-     * @param {() => { categories: any[] }} getLibraryCallback
+     * @param {() => { categories: any[], entries?: any[] }} getLibraryCallback
      * @param {(savedEntry: any) => Promise<void>} onSavedCallback
      */
     constructor(getLibraryCallback, onSavedCallback) {
@@ -32,7 +33,19 @@ export class SaveGroupModalManager {
 
         const lib = this.getLibrary();
         const categories = lib.categories || [];
+        const existingEntries = lib.entries || [];
         const categoryOptions = buildCategoryHierarchyOptions(categories);
+
+        // 提取所选磁贴中包含的已有组名并去重
+        const candidateGroupTitles = Array.from(
+            new Set(selectedTiles.map((t) => t.group_title).filter(Boolean))
+        );
+
+        // 智能默认值：恰好只有 1 个候选组名时自动预填，否则保持留空
+        let initialDefaultTitle = "";
+        if (candidateGroupTitles.length === 1) {
+            initialDefaultTitle = candidateGroupTitles[0];
+        }
 
         this.overlay = document.createElement("div");
         this.overlay.className = "prompt-vault-modal-overlay";
@@ -47,8 +60,20 @@ export class SaveGroupModalManager {
         <div class="prompt-vault-modal-body">
           <div class="prompt-vault-form-row">
             <div class="prompt-vault-form-col">
-              <label class="prompt-vault-form-label">组合名称 *</label>
-              <input type="text" class="prompt-vault-form-input" id="pv-group-title" placeholder="例如：做饭场景框架" autofocus />
+              <label class="prompt-vault-form-label">组合名称 * (可输入新名称或下拉选择已有)</label>
+              <input
+                type="text"
+                list="pv-group-datalist"
+                class="prompt-vault-form-input"
+                id="pv-group-title"
+                value="${initialDefaultTitle}"
+                placeholder="输入新组合名称，或从下拉菜单中选择..."
+                autofocus
+                autocomplete="off"
+              />
+              <datalist id="pv-group-datalist">
+                ${candidateGroupTitles.map((title) => `<option value="${title}"></option>`).join("")}
+              </datalist>
             </div>
             <div class="prompt-vault-form-col">
               <label class="prompt-vault-form-label">所属分类</label>
@@ -72,7 +97,7 @@ export class SaveGroupModalManager {
           </div>
 
           <div class="pv-info-callout" style="font-size: 11px; line-height: 1.4;">
-            保存后，该组合将收录入左侧词库；中栏当前所选的这 ${selectedTiles.length} 项将就地绑定为组合关联状态并生成连线。
+            若输入的组合名称在词库中已存在，将自动覆盖更新已有组合；若不存在则自动新建。中栏所选磁贴将原地绑定高亮。
           </div>
         </div>
         <div class="prompt-vault-modal-footer">
@@ -118,20 +143,26 @@ export class SaveGroupModalManager {
                     text: t.prompt || "",
                 }));
 
+                // 检索是否已存在同名组合条目
+                const matchedExisting = existingEntries.find(
+                    (e) => (e.title || "").trim() === groupTitle
+                );
+
                 const payload = {
+                    id: matchedExisting ? matchedExisting.id : undefined,
                     title: groupTitle,
                     text: groupMembers.map((m) => m.text).join(", "),
-                    categoryId: categoryId,
+                    categoryId: categoryId || (matchedExisting ? matchedExisting.categoryId : null),
                     groupMembers: groupMembers,
-                    tags: [],
-                    collections: [],
-                    note: "由中栏已选词条序列打包生成",
-                    previewHash: null,
+                    tags: matchedExisting ? matchedExisting.tags || [] : [],
+                    collections: matchedExisting ? matchedExisting.collections || [] : [],
+                    note: matchedExisting ? matchedExisting.note || "由中栏已选词条序列打包生成" : "由中栏已选词条序列打包生成",
+                    previewHash: matchedExisting ? matchedExisting.previewHash || matchedExisting.thumbnail || null : null,
                 };
 
                 const result = await upsertEntry(payload);
                 if (result && result.success) {
-                    const savedEntryId = result.data?.id || null;
+                    const savedEntryId = result.data?.id || (matchedExisting ? matchedExisting.id : null);
                     if (state) {
                         const newGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                         state.bindTilesToGroup(

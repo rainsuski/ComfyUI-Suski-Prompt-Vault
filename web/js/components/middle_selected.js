@@ -4,6 +4,7 @@
  * 中栏：已选提示词列表（Selected Prompts）组件。
  * 展示当前节点已选装配的磁贴序列、计算活跃聚焦组几何连线区间、
  * 分配首支尾穿透单轨角色、呈现多选批量操作条、集成存为提示词组弹窗与词库刷新联动、
+ * 采用轻量局部轨道 DOM 状态更新（彻底杜绝 Hover 引起的多选条与悬浮球重构闪烁）、
  * 支持自由批量拖拽排序、快捷新增空词条与免确认清空。
  */
 
@@ -34,7 +35,6 @@ export class MiddleSelectedComponent {
         this.onLibraryRefresh = onLibraryRefreshCallback;
         this.searchKeyword = "";
 
-        // 初始化“存为提示词组”弹窗管理器，保存成功后安全通知刷新词库
         this.groupModalManager = new SaveGroupModalManager(
             () => ({ categories: this.getCategoriesConfig() }),
             async () => {
@@ -45,7 +45,14 @@ export class MiddleSelectedComponent {
         );
 
         this.initDOM();
+
+        // 仅在数据模型变更时执行全量 DOM 重绘
         this.state.subscribe(() => this.renderList());
+
+        // 悬浮预览连线走轻量局部样式通道，绝对不清空或重建 DOM
+        this.state.subscribeHover((hoveredGroupId) => {
+            this.updateHoverTrackVisuals(hoveredGroupId);
+        });
     }
 
     initDOM() {
@@ -92,7 +99,7 @@ export class MiddleSelectedComponent {
         header.appendChild(filterRow);
         this.container.appendChild(header);
 
-        // 2. 批量操作挂载容器 (仅在 multiSelectedIds >= 2 时动态展现)
+        // 2. 批量操作挂载容器
         this.batchBarContainer = document.createElement("div");
         this.container.appendChild(this.batchBarContainer);
 
@@ -129,9 +136,19 @@ export class MiddleSelectedComponent {
 
     renderBatchBar() {
         const multiCount = this.state.multiSelectedIds.size;
-        this.batchBarContainer.innerHTML = "";
+        const currentBatchBar = this.batchBarContainer.querySelector(".prompt-vault-batch-bar");
 
         if (multiCount < 2) {
+            this.batchBarContainer.innerHTML = "";
+            return;
+        }
+
+        // 若多选条已存在，直接更新数字，绝不重新创建触发进入动画
+        if (currentBatchBar) {
+            const countLabel = currentBatchBar.querySelector(".prompt-vault-batch-bar-left span");
+            if (countLabel) {
+                countLabel.textContent = `已选 ${multiCount} 项`;
+            }
             return;
         }
 
@@ -188,6 +205,120 @@ export class MiddleSelectedComponent {
 
         batchBar.appendChild(rightSide);
         this.batchBarContainer.appendChild(batchBar);
+    }
+
+    /**
+     * 针对悬停状态进行就地轻量 DOM 图元重配，绝对不清空重绘。
+     * @param {string|null} hoveredGroupId
+     */
+    updateHoverTrackVisuals(hoveredGroupId) {
+        const tiles = this.state.selectedTiles;
+        const activeTile = this.state.getActiveTile();
+        const focusedGroupId = hoveredGroupId || (activeTile ? activeTile.group_id : null);
+
+        let groupMinIdx = -1;
+        let groupMaxIdx = -1;
+        let focusedGroupColor = null;
+
+        if (focusedGroupId) {
+            const memberIndices = [];
+            tiles.forEach((t, idx) => {
+                if (t.group_id === focusedGroupId) {
+                    memberIndices.push(idx);
+                    if (!focusedGroupColor && t.group_color) {
+                        focusedGroupColor = t.group_color;
+                    }
+                }
+            });
+
+            if (memberIndices.length > 0) {
+                groupMinIdx = Math.min(...memberIndices);
+                groupMaxIdx = Math.max(...memberIndices);
+            }
+        }
+
+        const rows = this.listViewport.querySelectorAll(".prompt-vault-tile-row");
+        rows.forEach((row) => {
+            const instanceId = row.dataset.instanceId;
+            const tile = tiles.find((t) => t.instance_id === instanceId);
+            if (!tile) return;
+
+            const actualIndex = tiles.indexOf(tile);
+            const isMemberOfFocusedGroup = Boolean(focusedGroupId && tile.group_id === focusedGroupId);
+
+            let trackRole = "none";
+            if (focusedGroupId && groupMinIdx !== -1 && groupMaxIdx !== -1) {
+                if (actualIndex >= groupMinIdx && actualIndex <= groupMaxIdx) {
+                    if (actualIndex === groupMinIdx) {
+                        trackRole = "first";
+                    } else if (actualIndex === groupMaxIdx) {
+                        trackRole = "last";
+                    } else if (isMemberOfFocusedGroup) {
+                        trackRole = "branch";
+                    } else {
+                        trackRole = "pass";
+                    }
+                }
+            }
+
+            const card = row.querySelector(".prompt-vault-tile");
+            if (card) {
+                if (isMemberOfFocusedGroup) {
+                    card.classList.add("is-group-active-member");
+                } else {
+                    card.classList.remove("is-group-active-member");
+                }
+            }
+
+            const finalColor = focusedGroupColor || tile.group_color;
+            if (finalColor) {
+                row.style.setProperty("--pv-group-color", finalColor);
+                row.style.setProperty("--pv-group-glow", `${finalColor}44`);
+            }
+
+            const track = row.querySelector(".prompt-vault-tile-track");
+            if (track) {
+                track.innerHTML = "";
+                track.className = "prompt-vault-tile-track";
+
+                if (trackRole === "first") {
+                    const vBottom = document.createElement("div");
+                    vBottom.className = "prompt-vault-track-v-bottom";
+                    const hBranch = document.createElement("div");
+                    hBranch.className = "prompt-vault-track-h-branch";
+                    const anchor = document.createElement("div");
+                    anchor.className = "prompt-vault-track-dot-anchor";
+                    track.appendChild(vBottom);
+                    track.appendChild(hBranch);
+                    track.appendChild(anchor);
+                } else if (trackRole === "branch") {
+                    const vFull = document.createElement("div");
+                    vFull.className = "prompt-vault-track-v-full";
+                    const hBranch = document.createElement("div");
+                    hBranch.className = "prompt-vault-track-h-branch";
+                    const anchor = document.createElement("div");
+                    anchor.className = "prompt-vault-track-dot-anchor";
+                    track.appendChild(vFull);
+                    track.appendChild(hBranch);
+                    track.appendChild(anchor);
+                } else if (trackRole === "last") {
+                    const vTop = document.createElement("div");
+                    vTop.className = "prompt-vault-track-v-top";
+                    const hBranch = document.createElement("div");
+                    hBranch.className = "prompt-vault-track-h-branch";
+                    const anchor = document.createElement("div");
+                    anchor.className = "prompt-vault-track-dot-anchor";
+                    track.appendChild(vTop);
+                    track.appendChild(hBranch);
+                    track.appendChild(anchor);
+                } else if (trackRole === "pass") {
+                    track.classList.add("prompt-vault-track-pass");
+                    const vFull = document.createElement("div");
+                    vFull.className = "prompt-vault-track-v-full";
+                    track.appendChild(vFull);
+                }
+            }
+        });
     }
 
     renderList() {
