@@ -2,7 +2,9 @@
 
 /**
  * 单个词条录入与编辑弹窗（PresetModalManager）。
- * 支持标题、分类、提示词、标签、收藏夹联动、备注及本地图片拖拽/剪贴板粘贴上传。
+ * 支持已有词条【保存】、新词条【新建】与组合成员【另存为】【保存至组】场景化按钮，
+ * 严格执行全库项（词条名与组名）唯一重名校验（除自己外不可重名），
+ * 组成员保存至组时精准更新组合内部对应成员，彻底杜绝全文拼接与组合元数据篡改。
  */
 
 import { getThumbnailUrl, upsertEntry } from "../../api.js";
@@ -12,7 +14,7 @@ import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
 export class PresetModalManager {
     /**
-     * @param {() => { categories: any[], collections: any[], tags: any[] }} getLibraryCallback
+     * @param {() => { categories: any[], collections: any[], tags: any[], entries?: any[] }} getLibraryCallback
      * @param {(savedData?: any) => Promise<void>} onSavedCallback
      */
     constructor(getLibraryCallback, onSavedCallback) {
@@ -20,28 +22,64 @@ export class PresetModalManager {
         this.onSaved = onSavedCallback;
         this.pendingImageFile = null;
         this.targetData = null;
+        this.modalContext = null;
         this.onPasteHandler = this.handleGlobalPaste.bind(this);
     }
 
-    open(initialData = null) {
+    /**
+     * 打开预设条目录入/编辑弹窗。
+     * @param {any} initialData - 初始条目或磁贴数据
+     * @param {{ isGroupMember?: boolean, instanceId?: string, parentPresetId?: string, state?: any }} [context=null] - 上下文环境
+     */
+    open(initialData = null, context = null) {
         this.close();
         this.targetData = initialData;
+        this.modalContext = context;
         this.pendingImageFile = null;
 
         this.overlay = document.createElement("div");
         this.overlay.className = "prompt-vault-modal-overlay";
         isolateCanvasEvents(this.overlay);
 
-        const isEditMode = Boolean(initialData && initialData.id);
+        const isGroupMember = Boolean(context?.isGroupMember || initialData?.group_id);
+        const isExistingEntry = Boolean(!isGroupMember && initialData && initialData.id);
+        const isNewEntry = Boolean(!isGroupMember && (!initialData || !initialData.id));
+
         const lib = this.getLibrary();
         const categories = lib.categories || [];
         const collections = lib.collections || [];
         const categoryOptions = buildCategoryHierarchyOptions(categories);
 
+        let modalTitleText = "新建预设条目";
+        if (isGroupMember) {
+            modalTitleText = "编辑组合成员";
+        } else if (isExistingEntry) {
+            modalTitleText = "编辑预设条目";
+        }
+
+        let footerButtonsHtml = "";
+        if (isGroupMember) {
+            footerButtonsHtml = `
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-modal-cancel">取消</button>
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-modal-save-as-new" title="脱离组合，作为独立普通词条收录进词库">另存为</button>
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-modal-save-to-group" title="更新所属组合内的该成员定义">保存至组</button>
+            `;
+        } else if (isExistingEntry) {
+            footerButtonsHtml = `
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-modal-cancel">取消</button>
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-modal-save">保存</button>
+            `;
+        } else {
+            footerButtonsHtml = `
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-modal-cancel">取消</button>
+              <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-modal-save">新建</button>
+            `;
+        }
+
         this.overlay.innerHTML = `
       <div class="prompt-vault-modal pv-modal-medium">
         <div class="prompt-vault-modal-header">
-          <div class="prompt-vault-modal-title">${isEditMode ? "编辑预设条目" : "新建预设条目"}</div>
+          <div class="prompt-vault-modal-title">${modalTitleText}</div>
           <button type="button" class="prompt-vault-modal-close" title="关闭">${renderIcon("x", 16)}</button>
         </div>
         <div class="prompt-vault-modal-body">
@@ -99,15 +137,14 @@ export class PresetModalManager {
           </div>
         </div>
         <div class="prompt-vault-modal-footer">
-          <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-modal-cancel">取消</button>
-          <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-modal-save">保存</button>
+          ${footerButtonsHtml}
         </div>
       </div>
     `;
 
         document.body.appendChild(this.overlay);
         this.fillFormData(initialData);
-        this.bindEvents();
+        this.bindEvents(isGroupMember);
         window.addEventListener("paste", this.onPasteHandler, true);
     }
 
@@ -161,10 +198,12 @@ export class PresetModalManager {
         }
     }
 
-    bindEvents() {
+    bindEvents(isGroupMember) {
         const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
         const cancelBtn = this.overlay.querySelector("#pv-modal-cancel");
         const saveBtn = this.overlay.querySelector("#pv-modal-save");
+        const saveAsNewBtn = this.overlay.querySelector("#pv-modal-save-as-new");
+        const saveToGroupBtn = this.overlay.querySelector("#pv-modal-save-to-group");
         const dropzone = this.overlay.querySelector("#pv-form-thumb-dropzone");
         const fileInput = this.overlay.querySelector("#pv-form-file-input");
 
@@ -199,7 +238,17 @@ export class PresetModalManager {
             });
         }
 
-        if (saveBtn) saveBtn.addEventListener("click", () => this.submitForm());
+        if (saveBtn) {
+            saveBtn.addEventListener("click", () => this.submitStandardForm());
+        }
+
+        if (saveAsNewBtn) {
+            saveAsNewBtn.addEventListener("click", () => this.submitSaveAsNew());
+        }
+
+        if (saveToGroupBtn) {
+            saveToGroupBtn.addEventListener("click", () => this.submitSaveToGroup());
+        }
     }
 
     handleGlobalPaste(event) {
@@ -227,7 +276,27 @@ export class PresetModalManager {
         previewBox.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="preview" />`;
     }
 
-    async submitForm() {
+    /**
+     * 校验当前输入标题在词库全项（词条名与组名）中是否唯一。
+     * @param {string} title
+     * @param {string|null} [selfId=null] - 允许同名的自身条目 ID
+     * @returns {boolean}
+     */
+    checkTitleUniqueness(title, selfId = null) {
+        const lib = this.getLibrary();
+        const entries = lib.entries || [];
+        const cleanTarget = title.trim().toLowerCase();
+
+        return !entries.some((e) => {
+            if (selfId && e.id === selfId) return false;
+            return (e.title || "").trim().toLowerCase() === cleanTarget;
+        });
+    }
+
+    /**
+     * 提交普通词条的新建或修改（已有词条覆盖 / 新词条新建）。
+     */
+    async submitStandardForm() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
@@ -244,10 +313,16 @@ export class PresetModalManager {
             return;
         }
 
+        const selfId = this.targetData && this.targetData.id ? this.targetData.id : null;
+        if (!this.checkTitleUniqueness(title, selfId)) {
+            alert(`词库中已存在名为 [${title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名！`);
+            return;
+        }
+
         const tags = tagsRaw.split(/[,，]+/).map((t) => t.trim()).filter(Boolean);
 
         const payload = {
-            id: this.targetData && this.targetData.id ? this.targetData.id : undefined,
+            id: selfId || undefined,
             title,
             text: prompt,
             categoryId: categoryId || null,
@@ -263,17 +338,183 @@ export class PresetModalManager {
             saveBtn.textContent = "保存中...";
         }
 
-        const result = await upsertEntry(payload, this.pendingImageFile);
-        if (result && result.success) {
-            if (typeof this.onSaved === "function") {
-                await this.onSaved(result.data);
+        try {
+            const result = await upsertEntry(payload, this.pendingImageFile);
+            if (result && result.success) {
+                if (typeof this.onSaved === "function") {
+                    await this.onSaved(result.data);
+                }
+                this.close();
+            } else {
+                alert(`保存失败: ${result?.error || "服务未响应"}`);
             }
-            this.close();
-        } else {
-            alert(`保存失败: ${result?.error || "服务未响应"}`);
+        } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.textContent = "保存";
+                saveBtn.textContent = selfId ? "保存" : "新建";
+            }
+        }
+    }
+
+    /**
+     * 组成员另存为独立普通词条（脱离组合，全库新建）。
+     */
+    async submitSaveAsNew() {
+        const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
+        const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+        const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
+        const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
+        const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
+        const note = (this.overlay.querySelector("#pv-form-note")?.value || "").trim();
+
+        if (!title) {
+            alert("请输入词条标题！");
+            return;
+        }
+        if (!prompt) {
+            alert("请输入提示词内容！");
+            return;
+        }
+
+        if (!this.checkTitleUniqueness(title, null)) {
+            alert(`词库中已存在名为 [${title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名！`);
+            return;
+        }
+
+        const tags = tagsRaw.split(/[,，]+/).map((t) => t.trim()).filter(Boolean);
+
+        const payload = {
+            title,
+            text: prompt,
+            categoryId: categoryId || null,
+            tags: tags,
+            collections: folder ? [folder] : [],
+            note,
+            previewHash: null,
+        };
+
+        const saveAsNewBtn = this.overlay.querySelector("#pv-modal-save-as-new");
+        if (saveAsNewBtn) {
+            saveAsNewBtn.disabled = true;
+            saveAsNewBtn.textContent = "保存中...";
+        }
+
+        try {
+            const result = await upsertEntry(payload, this.pendingImageFile);
+            if (result && result.success) {
+                if (typeof this.onSaved === "function") {
+                    await this.onSaved(result.data);
+                }
+                this.close();
+            } else {
+                alert(`另存为失败: ${result?.error || "服务未响应"}`);
+            }
+        } finally {
+            if (saveAsNewBtn) {
+                saveAsNewBtn.disabled = false;
+                saveAsNewBtn.textContent = "另存为";
+            }
+        }
+    }
+
+    /**
+     * 将编辑内容精准同步至所属组合模板（更新组合内部对应成员，绝不触碰组合元数据与拼接文本）。
+     */
+    async submitSaveToGroup() {
+        const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
+        const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+
+        if (!title) {
+            alert("请输入成员标题！");
+            return;
+        }
+        if (!prompt) {
+            alert("请输入提示词内容！");
+            return;
+        }
+
+        const parentPresetId = this.modalContext?.parentPresetId || this.targetData?.ref_preset_id;
+        if (!parentPresetId) {
+            alert("未找到该组员所属的组合预设 ID，无法同步至组！");
+            return;
+        }
+
+        const lib = this.getLibrary();
+        const entries = lib.entries || [];
+        const parentGroup = entries.find((e) => e.id === parentPresetId);
+
+        if (!parentGroup) {
+            alert("词库中未找到所属的组合模板条目，可能已被删除！");
+            return;
+        }
+
+        const rawMembers = parentGroup.groupMembers || parentGroup.members || [];
+        if (!Array.isArray(rawMembers) || rawMembers.length === 0) {
+            alert("该条目并非有效的组合模板！");
+            return;
+        }
+
+        const saveToGroupBtn = this.overlay.querySelector("#pv-modal-save-to-group");
+        if (saveToGroupBtn) {
+            saveToGroupBtn.disabled = true;
+            saveToGroupBtn.textContent = "保存中...";
+        }
+
+        try {
+            const originalTitle = this.targetData?.title || "";
+            const originalPrompt = this.targetData?.text || this.targetData?.prompt || "";
+
+            let matchedMemberIdx = rawMembers.findIndex(
+                (m) => m.title === originalTitle && (m.text === originalPrompt || m.prompt === originalPrompt)
+            );
+
+            if (matchedMemberIdx === -1) {
+                matchedMemberIdx = rawMembers.findIndex((m) => m.title === originalTitle);
+            }
+
+            if (matchedMemberIdx === -1) {
+                matchedMemberIdx = 0;
+            }
+
+            const updatedMembers = [...rawMembers];
+            updatedMembers[matchedMemberIdx] = {
+                title: title,
+                text: prompt,
+            };
+
+            const payload = {
+                id: parentGroup.id,
+                title: parentGroup.title,
+                text: "",
+                categoryId: parentGroup.categoryId || null,
+                groupMembers: updatedMembers,
+                tags: parentGroup.tags || [],
+                collections: parentGroup.collections || [],
+                note: parentGroup.note || "",
+                previewHash: parentGroup.previewHash || parentGroup.thumbnail || null,
+            };
+
+            const result = await upsertEntry(payload);
+            if (result && result.success) {
+                const state = this.modalContext?.state;
+                const instanceId = this.modalContext?.instanceId || this.targetData?.instance_id;
+                if (state && instanceId) {
+                    state.markGroupMemberAsSaved(instanceId, {
+                        title: title,
+                        prompt: prompt,
+                    });
+                }
+                if (typeof this.onSaved === "function") {
+                    await this.onSaved(result.data);
+                }
+                this.close();
+            } else {
+                alert(`更新至组失败: ${result?.error || "服务未响应"}`);
+            }
+        } finally {
+            if (saveToGroupBtn) {
+                saveToGroupBtn.disabled = false;
+                saveToGroupBtn.textContent = "保存至组";
             }
         }
     }
@@ -286,5 +527,6 @@ export class PresetModalManager {
         this.overlay = null;
         this.pendingImageFile = null;
         this.targetData = null;
+        this.modalContext = null;
     }
 }

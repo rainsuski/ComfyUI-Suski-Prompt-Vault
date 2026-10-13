@@ -3,9 +3,8 @@
 /**
  * 中栏：已选提示词列表（Selected Prompts）组件。
  * 展示当前节点已选装配的磁贴序列、计算活跃聚焦组几何连线区间、
- * 分配首支尾穿透单轨角色、呈现多选批量操作条、集成存为提示词组弹窗与词库刷新联动、
- * 采用轻量局部轨道 DOM 状态更新（彻底杜绝 Hover 引起的多选条与悬浮球重构闪烁）、
- * 支持自由批量拖拽排序、快捷新增空词条与免确认清空。
+ * 呈现多选批量操作条、透传全量词库数据源以驱动重名校验、
+ * 采用轻量局部轨道 DOM 状态更新、支持自由批量拖拽排序与清空。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
@@ -17,26 +16,27 @@ export class MiddleSelectedComponent {
     /**
      * @param {HTMLElement} container - 中栏宿主 DOM 容器
      * @param {import("../state.js").VaultNodeState} state - 状态机实例
-     * @param {() => any[]} getCategoriesConfigCallback - 获取分类元数据回调
+     * @param {() => { categories: any[], entries?: any[] } | any[]} getLibraryCallback - 获取全量库回调
      * @param {(tileDraft: any) => void} onSaveToVaultCallback - 单条草稿保存入库回调
      * @param {() => Promise<void>} [onLibraryRefreshCallback] - 全局词库刷新回调
      */
     constructor(
         container,
         state,
-        getCategoriesConfigCallback,
+        getLibraryCallback,
         onSaveToVaultCallback,
         onLibraryRefreshCallback
     ) {
         this.container = container;
         this.state = state;
-        this.getCategoriesConfig = getCategoriesConfigCallback;
+        this.getLibrary = getLibraryCallback;
         this.onSaveToVault = onSaveToVaultCallback;
         this.onLibraryRefresh = onLibraryRefreshCallback;
         this.searchKeyword = "";
 
+        // 直接透传全量词库获取回调，确保 SaveGroupModalManager 具备全库 entries 检索能力
         this.groupModalManager = new SaveGroupModalManager(
-            () => ({ categories: this.getCategoriesConfig() }),
+            this.getLibrary,
             async () => {
                 if (typeof this.onLibraryRefresh === "function") {
                     await this.onLibraryRefresh();
@@ -46,13 +46,17 @@ export class MiddleSelectedComponent {
 
         this.initDOM();
 
-        // 仅在数据模型变更时执行全量 DOM 重绘
         this.state.subscribe(() => this.renderList());
 
-        // 悬浮预览连线走轻量局部样式通道，绝对不清空或重建 DOM
         this.state.subscribeHover((hoveredGroupId) => {
             this.updateHoverTrackVisuals(hoveredGroupId);
         });
+    }
+
+    getCategoriesConfig() {
+        const lib = typeof this.getLibrary === "function" ? this.getLibrary() : {};
+        if (Array.isArray(lib)) return lib;
+        return lib.categories || [];
     }
 
     initDOM() {
@@ -143,7 +147,6 @@ export class MiddleSelectedComponent {
             return;
         }
 
-        // 若多选条已存在，直接更新数字，绝不重新创建触发进入动画
         if (currentBatchBar) {
             const countLabel = currentBatchBar.querySelector(".prompt-vault-batch-bar-left span");
             if (countLabel) {
@@ -207,10 +210,6 @@ export class MiddleSelectedComponent {
         this.batchBarContainer.appendChild(batchBar);
     }
 
-    /**
-     * 针对悬停状态进行就地轻量 DOM 图元重配，绝对不清空重绘。
-     * @param {string|null} hoveredGroupId
-     */
     updateHoverTrackVisuals(hoveredGroupId) {
         const tiles = this.state.selectedTiles;
         const activeTile = this.state.getActiveTile();

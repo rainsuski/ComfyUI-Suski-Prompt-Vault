@@ -3,8 +3,8 @@
 /**
  * 节点内部响应式状态机与脏状态追踪模块。
  * 管理当前节点已选磁贴实例、组合模板导入、组合原子性删除、
- * 词库组反选移除、Shift 多选保护、批量拖拽排序、批量删除、就地成组绑定、
- * 独立轻量悬浮预览监听通道（杜绝全量重绘闪烁）、草稿暂存、跨平台换行符规范化脏标记比对与 Widget 序列化双向绑定。
+ * 组员更新去脏同步、词库组反选移除、Shift 多选保护、批量拖拽排序、批量删除、就地成组绑定、
+ * 独立轻量悬浮预览监听通道、草稿暂存、跨平台换行符规范化脏标记比对与 Widget 序列化双向绑定。
  */
 
 import { clampAndRoundWeight } from "./utils/prompt_format.js";
@@ -67,11 +67,6 @@ export class VaultNodeState {
         return () => this.subscribers.delete(callback);
     }
 
-    /**
-     * 订阅仅限悬浮连线状态的轻量级微调更新。
-     * @param {Function} callback
-     * @returns {Function}
-     */
     subscribeHover(callback) {
         this.hoverSubscribers.add(callback);
         return () => this.hoverSubscribers.delete(callback);
@@ -165,10 +160,6 @@ export class VaultNodeState {
         return this.selectedTiles.filter((t) => this.multiSelectedIds.has(t.instance_id));
     }
 
-    /**
-     * 仅触发轻量悬浮通道通知，杜绝全量 DOM 重建与组件闪烁。
-     * @param {string|null} groupId
-     */
     setHoveredGroupId(groupId) {
         if (this.hoveredGroupId !== groupId) {
             this.hoveredGroupId = groupId;
@@ -485,6 +476,20 @@ export class VaultNodeState {
         tile.category_id = savedEntry.categoryId || null;
         tile.category = catName;
         tile.thumbnail = savedEntry.previewHash || tile.thumbnail;
+        tile.is_dirty = false;
+        this.notify();
+    }
+
+    /**
+     * 将已更新并入库的组员磁贴就地去脏并同步最新名称与提示词。
+     * @param {string} instanceId
+     * @param {{ title: string, prompt: string }} updatedMember
+     */
+    markGroupMemberAsSaved(instanceId, updatedMember) {
+        const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (!tile) return;
+        if (updatedMember.title !== undefined) tile.title = updatedMember.title;
+        if (updatedMember.prompt !== undefined) tile.prompt = updatedMember.prompt;
         tile.is_dirty = false;
         this.notify();
     }

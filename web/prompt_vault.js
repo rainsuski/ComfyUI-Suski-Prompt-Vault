@@ -214,19 +214,26 @@ app.registerExtension({
                 () => exportModalManager.open()
             );
 
-            // 挂载中栏组件 (传递词条草稿另存回调与全局刷新回调)
+            // 挂载中栏组件：向中栏透传全量 globalLibrary 回调，确保组合弹窗具备全库 entries 检索能力
             new MiddleSelectedComponent(
                 colMiddle,
                 state,
-                () => globalLibrary.categories || [],
+                () => globalLibrary,
                 (tileDraft) => {
                     if (!tileDraft) return;
-                    presetModalManager.open({
-                        title: tileDraft.title,
-                        text: tileDraft.prompt,
-                        categoryId: tileDraft.category_id,
-                        previewHash: tileDraft.thumbnail,
-                    });
+                    presetModalManager.open(
+                        {
+                            title: tileDraft.title,
+                            text: tileDraft.prompt,
+                            categoryId: tileDraft.category_id,
+                            previewHash: tileDraft.thumbnail,
+                        },
+                        {
+                            isGroupMember: false,
+                            instanceId: tileDraft.instance_id,
+                            state: state,
+                        }
+                    );
                 },
                 notifyRefresh
             );
@@ -239,16 +246,28 @@ app.registerExtension({
                 () => globalLibrary.categories || [],
                 (tileDraft) => {
                     if (!tileDraft) return;
-                    presetModalManager.open({
-                        id: tileDraft.ref_preset_id || undefined,
-                        title: tileDraft.title,
-                        text: tileDraft.prompt,
-                        categoryId: tileDraft.category_id,
-                        previewHash: tileDraft.thumbnail,
-                    });
+                    const isGroupMember = Boolean(tileDraft.group_id);
+                    presetModalManager.open(
+                        {
+                            id: isGroupMember ? undefined : (tileDraft.ref_preset_id || undefined),
+                            ref_preset_id: tileDraft.ref_preset_id || undefined,
+                            group_id: tileDraft.group_id || undefined,
+                            instance_id: tileDraft.instance_id,
+                            title: tileDraft.title,
+                            text: tileDraft.prompt,
+                            categoryId: tileDraft.category_id,
+                            previewHash: tileDraft.thumbnail,
+                        },
+                        {
+                            isGroupMember: isGroupMember,
+                            instanceId: tileDraft.instance_id,
+                            parentPresetId: tileDraft.ref_preset_id,
+                            state: state,
+                        }
+                    );
                     presetModalManager.onSaved = async (savedEntry) => {
                         await refreshGlobalData();
-                        if (savedEntry) {
+                        if (savedEntry && !isGroupMember) {
                             state.markTileAsSavedToPreset(
                                 tileDraft.instance_id,
                                 savedEntry,

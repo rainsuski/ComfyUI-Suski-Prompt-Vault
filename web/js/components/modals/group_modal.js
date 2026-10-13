@@ -3,8 +3,8 @@
 /**
  * 存为提示词组（SaveGroupModalManager）弹窗管理器。
  * 提供支持自输入与历史匹配的可输入下拉框（Combo Input），
- * 自动识别单归属默认值，支持同名组合自动覆盖更新与新组合写入，
- * 完成本地词库持久化入库，回填条目 ID，联动状态机就地绑定高亮连线与异常安全防护。
+ * 杜绝管理端擅自拼接全文（text 保持为空），仅维护纯净组合结构与成员，
+ * 严格执行词库全项（词条名与组名）唯一重名校验（除覆盖自身绑定的原组外禁止重名）。
  */
 
 import { upsertEntry } from "../../api.js";
@@ -14,7 +14,7 @@ import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
 export class SaveGroupModalManager {
     /**
-     * @param {() => { categories: any[], entries?: any[] }} getLibraryCallback
+     * @param {() => { categories: any[], entries?: any[] } | any} getLibraryCallback
      * @param {(savedEntry: any) => Promise<void>} onSavedCallback
      */
     constructor(getLibraryCallback, onSavedCallback) {
@@ -31,7 +31,8 @@ export class SaveGroupModalManager {
             return;
         }
 
-        const lib = this.getLibrary();
+        const rawLib = typeof this.getLibrary === "function" ? this.getLibrary() : {};
+        const lib = Array.isArray(rawLib) ? { categories: rawLib, entries: [] } : (rawLib || {});
         const categories = lib.categories || [];
         const existingEntries = lib.entries || [];
         const categoryOptions = buildCategoryHierarchyOptions(categories);
@@ -39,6 +40,11 @@ export class SaveGroupModalManager {
         // 提取所选磁贴中包含的已有组名并去重
         const candidateGroupTitles = Array.from(
             new Set(selectedTiles.map((t) => t.group_title).filter(Boolean))
+        );
+
+        // 提取所选磁贴中关联的既有组合条目 ID 集合
+        const associatedPresetIds = new Set(
+            selectedTiles.map((t) => t.ref_preset_id).filter(Boolean)
         );
 
         // 智能默认值：恰好只有 1 个候选组名时自动预填，否则保持留空
@@ -97,7 +103,7 @@ export class SaveGroupModalManager {
           </div>
 
           <div class="pv-info-callout" style="font-size: 11px; line-height: 1.4;">
-            若输入的组合名称在词库中已存在，将自动覆盖更新已有组合；若不存在则自动新建。中栏所选磁贴将原地绑定高亮。
+            提示词库中所有项（词条与词组）名称均保持全库唯一。保存后所选磁贴将原地绑定组合并点亮连线。
           </div>
         </div>
         <div class="prompt-vault-modal-footer">
@@ -134,6 +140,23 @@ export class SaveGroupModalManager {
                 return;
             }
 
+            // 全库唯一重名检测：同时检索全库所有词条名与组名
+            const cleanTargetTitle = groupTitle.toLowerCase();
+            const duplicateEntry = existingEntries.find((e) => {
+                const existingTitle = (e.title || "").trim().toLowerCase();
+                return existingTitle === cleanTargetTitle;
+            });
+
+            if (duplicateEntry) {
+                // 仅当同名项正是当前所选磁贴绑定的同一个原组时，允许覆盖保存，其余一律拒绝重名
+                const isOverwritingSelf = associatedPresetIds.has(duplicateEntry.id);
+                if (!isOverwritingSelf) {
+                    alert(`词库中已存在名为 [${duplicateEntry.title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名，请更换名称！`);
+                    titleInput.focus();
+                    return;
+                }
+            }
+
             submitBtn.disabled = true;
             submitBtn.textContent = "保存中...";
 
@@ -143,26 +166,25 @@ export class SaveGroupModalManager {
                     text: t.prompt || "",
                 }));
 
-                // 检索是否已存在同名组合条目
-                const matchedExisting = existingEntries.find(
-                    (e) => (e.title || "").trim() === groupTitle
-                );
+                const targetOverwriteEntry = duplicateEntry && associatedPresetIds.has(duplicateEntry.id)
+                    ? duplicateEntry
+                    : null;
 
                 const payload = {
-                    id: matchedExisting ? matchedExisting.id : undefined,
+                    id: targetOverwriteEntry ? targetOverwriteEntry.id : undefined,
                     title: groupTitle,
-                    text: groupMembers.map((m) => m.text).join(", "),
-                    categoryId: categoryId || (matchedExisting ? matchedExisting.categoryId : null),
+                    text: "",
+                    categoryId: categoryId || (targetOverwriteEntry ? targetOverwriteEntry.categoryId : null),
                     groupMembers: groupMembers,
-                    tags: matchedExisting ? matchedExisting.tags || [] : [],
-                    collections: matchedExisting ? matchedExisting.collections || [] : [],
-                    note: matchedExisting ? matchedExisting.note || "由中栏已选词条序列打包生成" : "由中栏已选词条序列打包生成",
-                    previewHash: matchedExisting ? matchedExisting.previewHash || matchedExisting.thumbnail || null : null,
+                    tags: targetOverwriteEntry ? targetOverwriteEntry.tags || [] : [],
+                    collections: targetOverwriteEntry ? targetOverwriteEntry.collections || [] : [],
+                    note: targetOverwriteEntry ? targetOverwriteEntry.note || "" : "由中栏已选词条序列打包生成",
+                    previewHash: targetOverwriteEntry ? targetOverwriteEntry.previewHash || targetOverwriteEntry.thumbnail || null : null,
                 };
 
                 const result = await upsertEntry(payload);
                 if (result && result.success) {
-                    const savedEntryId = result.data?.id || (matchedExisting ? matchedExisting.id : null);
+                    const savedEntryId = result.data?.id || (targetOverwriteEntry ? targetOverwriteEntry.id : null);
                     if (state) {
                         const newGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
                         state.bindTilesToGroup(

@@ -3,7 +3,7 @@
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
  * 提供分类与收藏夹双下拉联动筛选、组合模板与普通词条自动识别装配、
- * 多维度即时检索、分类管理与导入导出弹窗唤起。
+ * 多维度即时检索、分类管理中心与导入导出中心弹窗唤起。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
@@ -102,18 +102,6 @@ export class LeftVaultComponent {
         const btnGroup = document.createElement("div");
         btnGroup.style.display = "flex";
         btnGroup.style.gap = "4px";
-
-        const newBtn = document.createElement("button");
-        newBtn.type = "button";
-        newBtn.className = "prompt-vault-btn prompt-vault-btn-primary";
-        newBtn.innerHTML = `${renderIcon("plus", 12)} <span>新建</span>`;
-        newBtn.title = "录入新词条到本地预设库";
-        newBtn.addEventListener("click", () => {
-            if (typeof this.onOpenEntryModal === "function") {
-                this.onOpenEntryModal(null);
-            }
-        });
-        btnGroup.appendChild(newBtn);
 
         const manageTaxonomyBtn = document.createElement("button");
         manageTaxonomyBtn.type = "button";
