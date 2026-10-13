@@ -4,7 +4,7 @@
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
  * 遵循归一化模型：entries 存放纯净词条，groups 存放关系组合。
  * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
- * 接入导入导出与 WebSocket 实时多节点同步广播。
+ * 彻底静默兼容 Nodes 2.0 序列化通道，并接入导入导出与 WebSocket 实时多节点同步广播。
  */
 
 import { api } from "../../../scripts/api.js";
@@ -28,10 +28,10 @@ import { isolateCanvasEvents } from "./js/utils/events.js";
 /** 目标节点名称标识 */
 const TARGET_NODE_TYPE = "PromptVaultSelector";
 
-/** 全局标准库缓存数据 (对齐纯净 schema) */
+/** 全局标准库缓存数据 (对齐 suski-prompt-library v1 规范) */
 let globalLibrary = {
-    format: "aaalice-prompt-library",
-    version: 2,
+    format: "suski-prompt-library",
+    version: 1,
     categories: [],
     collections: [],
     tags: [],
@@ -75,6 +75,29 @@ async function notifyAllNodesRefresh() {
     await refreshGlobalData();
     for (const state of activeNodeStates) {
         state.notify();
+    }
+}
+
+/**
+ * 彻底隐藏序列化 Widget（同时适配 Classic Canvas 与 Nodes 2.0 Vue DOM）。
+ * @param {any} widget 待隐藏的 widget 实例
+ */
+function makeWidgetInvisible(widget) {
+    if (!widget) return;
+    widget.hidden = true;
+    widget.options = widget.options || {};
+    widget.options.hidden = true;
+    widget.options.hideInPanel = true;
+    widget.computeSize = () => [0, -4];
+    widget.draw = () => { };
+
+    if (widget.element) {
+        widget.element.style.display = "none";
+        widget.element.hidden = true;
+    }
+    if (widget.inputEl) {
+        widget.inputEl.style.display = "none";
+        widget.inputEl.hidden = true;
     }
 }
 
@@ -122,9 +145,16 @@ app.registerExtension({
             if (!dataWidget) {
                 dataWidget = node.addWidget("text", "selected_tiles_data", "[]", () => { });
             }
-            dataWidget.computeSize = () => [0, -4];
-            dataWidget.draw = () => { };
-            dataWidget.serializeValue = () => JSON.stringify(state.selectedTiles);
+
+            // 全平台隐形适配
+            makeWidgetInvisible(dataWidget);
+
+            // 数据双向序列化锁定
+            dataWidget.serializeValue = () => {
+                const serialized = JSON.stringify(state.selectedTiles);
+                dataWidget.value = serialized;
+                return serialized;
+            };
 
             const container = document.createElement("div");
             container.className = "prompt-vault-container";
@@ -189,12 +219,13 @@ app.registerExtension({
             importInput.accept = ".json";
             importInput.style.display = "none";
             importInput.addEventListener("change", (e) => {
-                const file = e.target.files && e.target.files[0];
+                const target = /** @type {HTMLInputElement} */ (e.target);
+                const file = target.files && target.files[0];
                 if (file) {
                     const reader = new FileReader();
                     reader.onload = (event) => {
                         try {
-                            const text = String(event.target.result || "").replace(/^\ufeff/, "");
+                            const text = String(event.target?.result || "").replace(/^\ufeff/, "");
                             const parsed = JSON.parse(text);
                             importModalManager.open(parsed, file.name, file.size);
                         } catch (err) {
@@ -207,7 +238,7 @@ app.registerExtension({
             });
             container.appendChild(importInput);
 
-            // 挂载左栏组件：传递全库对象与组编辑回调
+            // 挂载左栏组件
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -299,14 +330,17 @@ app.registerExtension({
         };
 
         const origOnConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function (info) {
+        nodeType.prototype.onConfigure = function () {
             if (typeof origOnConfigure === "function") {
                 origOnConfigure.apply(this, arguments);
             }
 
             const node = this;
             if (node._vaultState) {
-                let dataWidget = node.widgets?.find((w) => w.name === "selected_tiles_data");
+                const dataWidget = node.widgets?.find((w) => w.name === "selected_tiles_data");
+                if (dataWidget) {
+                    makeWidgetInvisible(dataWidget);
+                }
                 const serializedValue = dataWidget ? dataWidget.value : "[]";
                 node._vaultState.loadFromSerialized(serializedValue);
             }

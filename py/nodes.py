@@ -1,7 +1,9 @@
+# File: ComfyUI-Suski-Prompt-Vault/py/nodes.py
 """ComfyUI 自定义节点与提示词加权拼接引擎。
 
 定义 PromptVaultSelector 节点类，解析前端传递的磁贴序列并实现加权格式化与清洗。
-支持 prompt/text 双字段键兼容，并提供数据探针元数据自省协议接口。
+支持 prompt/text 双字段键兼容，对 Nodes 2.0 序列化通道进行静默隐藏标记，
+并提供数据探针元数据自省协议接口。
 """
 
 import json
@@ -25,6 +27,8 @@ class PromptVaultSelector:
                     {
                         "default": "[]",
                         "multiline": False,
+                        "hidden": True,
+                        "hideInPanel": True,
                     },
                 ),
             },
