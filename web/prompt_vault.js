@@ -4,7 +4,8 @@
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
  * 遵循归一化模型：entries 存放纯净词条，groups 存放关系组合。
  * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
- * 彻底静默兼容 Nodes 2.0 序列化通道，并接入导入导出与 WebSocket 实时多节点同步广播。
+ * 彻底静默兼容 Nodes 2.0 序列化通道，免疫侧栏 Widget 宽度污染（Issue #12443），
+ * 接入导入导出与 WebSocket 实时多节点同步广播。
  */
 
 import { api } from "../../../scripts/api.js";
@@ -315,8 +316,10 @@ app.registerExtension({
                 }
             );
 
-            node.addDOMWidget("prompt_vault_ui", "custom", container, {
+            const domWidget = node.addDOMWidget("prompt_vault_ui", "custom", container, {
                 serialize: false,
+                canvasOnly: true,
+                hideOnZoom: false,
                 getValue() {
                     return JSON.stringify(state.selectedTiles);
                 },
@@ -327,6 +330,28 @@ app.registerExtension({
                     return 520;
                 },
             });
+
+            // 深度免疫侧栏 Issue #12443 宽度污染
+            if (domWidget) {
+                domWidget.options = domWidget.options || {};
+                domWidget.options.canvasOnly = true;
+                domWidget.options.hideInPanel = true;
+
+                try {
+                    Object.defineProperty(domWidget, "width", {
+                        get() {
+                            return undefined;
+                        },
+                        set(_) {
+                            // 拦截侧边栏非法写入，强制让 LiteGraph 永远回退至 node.size[0]
+                        },
+                        configurable: true,
+                        enumerable: true,
+                    });
+                } catch (err) {
+                    console.warn("[PromptVault] Failed to define width guard on domWidget", err);
+                }
+            }
         };
 
         const origOnConfigure = nodeType.prototype.onConfigure;
@@ -343,6 +368,13 @@ app.registerExtension({
                 }
                 const serializedValue = dataWidget ? dataWidget.value : "[]";
                 node._vaultState.loadFromSerialized(serializedValue);
+
+                const domWidget = node.widgets?.find((w) => w.name === "prompt_vault_ui");
+                if (domWidget) {
+                    domWidget.options = domWidget.options || {};
+                    domWidget.options.canvasOnly = true;
+                    domWidget.options.hideInPanel = true;
+                }
             }
         };
 
