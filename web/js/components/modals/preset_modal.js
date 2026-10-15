@@ -99,7 +99,7 @@ export class PresetModalManager {
           </div>
 
           <div class="prompt-vault-form-col">
-            <label class="prompt-vault-form-label">提示词 Prompt 内容 * (支持 Ctrl+滚轮 / 方向键快速调权)</label>
+            <label class="prompt-vault-form-label">提示词 Prompt 内容</label>
             <textarea class="prompt-vault-form-textarea" id="pv-form-prompt" placeholder=""></textarea>
           </div>
 
