@@ -3,6 +3,7 @@
 /**
  * LiteGraph 画布事件隔离与拦截模块。
  * 阻止 DOM 元素内部的用户操作（点击、拖拽、键盘输入、滚轮）穿透冒泡至 ComfyUI 底层画布，
+ * 全面静默整个组件区域内的浏览器 Ctrl+滚轮全局网页缩放，
  * 同时接管鼠标中键拖拽行为，驱动底层 LiteGraph 画布顺畅平移。
  */
 
@@ -62,6 +63,7 @@ function startCanvasMiddleDrag(startEvent) {
 /**
  * 为目标元素绑定输入与交互拦截，切断向底层 LiteGraph 拖动画布及键盘快捷键的传递。
  * 当用户在元素内按下鼠标中键（button === 1）时，接管并平移底层画布。
+ * 全面拦截该容器范围内的 Ctrl+滚轮 浏览器全局缩放。
  * @param {HTMLElement} element - 需要隔离事件的 DOM 容器
  */
 export function isolateCanvasEvents(element) {
@@ -103,10 +105,24 @@ export function isolateCanvasEvents(element) {
     // 拦截键盘事件，防止输入内容时误触发 ComfyUI 全局快捷键（如空格拖动画布、删除节点等）
     element.addEventListener("keydown", stopHandler, { passive: false });
     element.addEventListener("keyup", stopHandler, { passive: false });
+
+    // 容器级阻断：在整个组件内彻底静默 Ctrl+滚轮 导致的浏览器全局缩放
+    element.addEventListener(
+        "wheel",
+        (event) => {
+            if (event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+            }
+        },
+        { passive: false }
+    );
 }
 
 /**
  * 绑定滚动区域的滚轮事件隔离，确保列表内部滚动时不触发画布放大与缩小。
+ * 1. 智能放行具备独立滚动能力的子元素（如 textarea）；
+ * 2. 按住 Ctrl/Meta 时全面阻断浏览器全局网页缩放，平滑降级为普通纵向滚动列表，彻底消除顶底与中间的行为撕裂；
+ * 3. 普通滚动时切断边缘穿透，防止误缩放底层 ComfyUI 画布。
  * @param {HTMLElement} scrollContainer - 具备 overflow-y 的滚动容器
  */
 export function isolateWheelScroll(scrollContainer) {
@@ -115,8 +131,27 @@ export function isolateWheelScroll(scrollContainer) {
     scrollContainer.addEventListener(
         "wheel",
         (event) => {
-            // 彻底阻断滚轮向 LiteGraph 画布冒泡导致画布缩放
+            // 阻断滚轮向 LiteGraph 画布冒泡导致画布缩放
             event.stopPropagation();
+
+            // 若事件源是内部具备独立滚动能力的子元素（如 textarea），交由子元素自身处理
+            const target = /** @type {HTMLElement|null} */ (event.target);
+            if (target && target !== scrollContainer) {
+                const targetIsScrollable = target.scrollHeight > target.clientHeight;
+                if (targetIsScrollable) {
+                    return;
+                }
+            }
+
+            const isCtrl = event.ctrlKey || event.metaKey;
+
+            // 无论处于列表顶部、中部还是底部，只要按住 Ctrl，坚决阻止浏览器全局缩放网页
+            if (isCtrl) {
+                event.preventDefault();
+                // 降级为平滑纵向滚动当前列表本身
+                scrollContainer.scrollTop += event.deltaY;
+                return;
+            }
 
             const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
             const isScrollable = scrollHeight > clientHeight;
@@ -126,7 +161,7 @@ export function isolateWheelScroll(scrollContainer) {
                 return;
             }
 
-            // 到达顶部或底部时阻止默认滚动穿透
+            // 到达顶部或底部时阻止默认滚动穿透至 ComfyUI 画布
             const isAtTop = scrollTop <= 0 && event.deltaY < 0;
             const isAtBottom = scrollTop + clientHeight >= scrollHeight && event.deltaY > 0;
 

@@ -3,7 +3,8 @@
 /**
  * 提示词词库选择器主容器与三栏布局样式表。
  * 背景采用透明/半透明继承宿主节点色彩，控件全面转向悬浮圆角胶囊风格，
- * 统一三栏底栏标高对齐、移除右栏冗余顶部分割线并提供统一椭圆胶囊交互底栏。
+ * 统一三栏底栏标高对齐、移除右栏冗余顶部分割线并提供统一椭圆胶囊交互底栏，
+ * 提供低调克制、低饱和度的文本选区微光配色。
  */
 
 :root {
@@ -358,6 +359,13 @@
 
 .prompt-vault-editor-textarea:focus {
     border-color: var(--pv-border-active);
+}
+
+/* 低调半透明微光选区：克制优雅，避免刺眼纯色块破坏编辑沉浸感 */
+.prompt-vault-editor-textarea::selection,
+.prompt-vault-form-textarea::selection {
+    background-color: rgba(99, 102, 241, 0.28);
+    color: var(--pv-text-primary);
 }
 
 /* 底部动作条 */

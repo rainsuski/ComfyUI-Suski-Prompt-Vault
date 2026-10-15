@@ -472,7 +472,7 @@ export class VaultNodeState {
 
     /**
      * 更新磁贴内容并与真实词条进行纯净去脏对比。
-     * 因为每个磁贴的 ref_preset_id 严格指向真实 entry.id，对比基准绝不出错。
+     * 加入 Diff 防护：若属性无实际变更且脏标记未变，直接返回，切断无效 notify 与 DOM 销毁。
      * @param {string} instanceId
      * @param {{ title?: string, prompt?: string, category_id?: string|null, category?: string }} updates
      * @param {any[]} allEntries
@@ -481,11 +481,26 @@ export class VaultNodeState {
         const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
         if (!tile) return;
 
-        if (updates.title !== undefined) tile.title = updates.title;
-        if (updates.prompt !== undefined) tile.prompt = updates.prompt;
-        if (updates.category_id !== undefined) tile.category_id = updates.category_id;
-        if (updates.category !== undefined) tile.category = updates.category;
+        let hasActualChanges = false;
 
+        if (updates.title !== undefined && tile.title !== updates.title) {
+            tile.title = updates.title;
+            hasActualChanges = true;
+        }
+        if (updates.prompt !== undefined && tile.prompt !== updates.prompt) {
+            tile.prompt = updates.prompt;
+            hasActualChanges = true;
+        }
+        if (updates.category_id !== undefined && tile.category_id !== updates.category_id) {
+            tile.category_id = updates.category_id;
+            hasActualChanges = true;
+        }
+        if (updates.category !== undefined && tile.category !== updates.category) {
+            tile.category = updates.category;
+            hasActualChanges = true;
+        }
+
+        const prevDirty = tile.is_dirty;
         if (!tile.ref_preset_id) {
             tile.is_dirty = true;
         } else {
@@ -498,6 +513,15 @@ export class VaultNodeState {
             } else {
                 tile.is_dirty = true;
             }
+        }
+
+        if (prevDirty !== tile.is_dirty) {
+            hasActualChanges = true;
+        }
+
+        // 若内容和状态均无任何变动，直接返回，彻底杜绝打断用户点击
+        if (!hasActualChanges) {
+            return;
         }
 
         this.notify();
@@ -516,6 +540,21 @@ export class VaultNodeState {
         tile.category_id = savedEntry.categoryId || null;
         tile.category = catName;
         tile.thumbnail = savedEntry.previewHash || tile.thumbnail;
+        tile.is_dirty = false;
+        this.notify();
+    }
+
+    /**
+     * 标记组合内部特定成员已成功入库同步。
+     * @param {string} instanceId
+     * @param {{ title?: string, prompt?: string, ref_preset_id?: string }} data
+     */
+    markGroupMemberAsSaved(instanceId, data) {
+        const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (!tile) return;
+        if (data.title !== undefined) tile.title = data.title;
+        if (data.prompt !== undefined) tile.prompt = data.prompt;
+        if (data.ref_preset_id !== undefined) tile.ref_preset_id = data.ref_preset_id;
         tile.is_dirty = false;
         this.notify();
     }

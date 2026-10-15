@@ -4,12 +4,14 @@
  * 右侧详情与实时编辑器组件。
  * 保持持久 DOM 引用以杜绝打字过程中的焦点丢失，
  * 直接与标准分类实体 (categoryId) 双向绑定，
- * 多重监听 input/change/blur 捕获外部三方格式化插件，
- * 点击入库时实时读取最新 DOM 内容并杜绝未格式化旧文本流出。
+ * 精简事件流避免失焦阶段触发无效重新渲染以打断单次点击事件，
+ * 集成快捷键（Ctrl+滚轮/方向键）实现光标智能嗅探加减权，
+ * 切换磁贴时归零光标位置，确保普通点击编辑完全不受干扰。
  */
 
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
+import { bindPromptWeightShortcuts } from "../utils/prompt_format.js";
 
 /**
  * 递归扁平化分类树为带缩进的前缀下拉选项。
@@ -135,7 +137,6 @@ export class RightEditorComponent {
             }
         };
         this.titleInput.addEventListener("input", syncTitle);
-        this.titleInput.addEventListener("change", syncTitle);
         titleGroup.appendChild(this.titleInput);
         this.formContainer.appendChild(titleGroup);
 
@@ -169,7 +170,7 @@ export class RightEditorComponent {
         promptGroup.style.flex = "1 1 0";
         promptGroup.style.display = "flex";
         promptGroup.style.flexDirection = "column";
-        promptGroup.innerHTML = `<label class="prompt-vault-editor-label">提示词</label>`;
+        promptGroup.innerHTML = `<label class="prompt-vault-editor-label">提示词 (Ctrl+滚轮 / 方向键 调权)</label>`;
 
         this.textarea = document.createElement("textarea");
         this.textarea.className = "prompt-vault-editor-textarea comfy-multiline-input";
@@ -187,8 +188,9 @@ export class RightEditorComponent {
             }
         };
         this.textarea.addEventListener("input", syncPrompt);
-        this.textarea.addEventListener("change", syncPrompt);
-        this.textarea.addEventListener("blur", syncPrompt);
+
+        // 接入 Tag 智能加减权（键盘 + Ctrl滚轮调权，带焦点守卫并放行普通长文本滚动）
+        bindPromptWeightShortcuts(this.textarea, syncPrompt);
 
         promptGroup.appendChild(this.textarea);
         this.formContainer.appendChild(promptGroup);
@@ -213,6 +215,7 @@ export class RightEditorComponent {
                 this.titleInput.value = activeTile.title || "";
                 this.catSelect.value = activeTile.category_id || "";
                 this.textarea.value = activeTile.prompt || "";
+                this.textarea.setSelectionRange(0, 0);
             }
         });
         actionsRow.appendChild(this.revertBtn);
@@ -291,6 +294,8 @@ export class RightEditorComponent {
             this.titleInput.value = activeTile.title || "";
             this.catSelect.value = activeTile.category_id || "";
             this.textarea.value = activeTile.prompt || "";
+            // 切换磁贴时将光标归零至文本开头，消除隐式停在最末尾的副作用
+            this.textarea.setSelectionRange(0, 0);
         } else if (!activeTile.is_dirty) {
             this.titleInput.value = activeTile.title || "";
             this.catSelect.value = activeTile.category_id || "";

@@ -3,9 +3,8 @@
 /**
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
  * 遵循归一化模型：entries 存放纯净词条，groups 存放关系组合。
- * 装配三栏布局、管理全局标准库状态树、生命周期持久化、
- * 彻底静默兼容 Nodes 2.0 序列化通道，免疫侧栏 Widget 宽度污染（Issue #12443），
- * 接入导入导出与 WebSocket 实时多节点同步广播。
+ * 各节点保持独立工作流（适配分步采样），通过全局 WebSocket 广播与防抖同步词库。
+ * 彻底静默兼容 Nodes 2.0 序列化通道，免疫侧栏 Widget 宽度污染（Issue #12443）。
  */
 
 import { api } from "../../../scripts/api.js";
@@ -69,14 +68,23 @@ async function refreshGlobalData() {
     }
 }
 
+let refreshDebounceTimer = null;
+
 /**
- * 刷新全局词库缓存并通知所有活跃节点重新渲染。
+ * 防抖刷新全局词库缓存并通知所有活跃节点感知词库变动。
+ * 合并本地主动操作与 WebSocket 后端广播，杜绝高频并发重绘。
  */
 async function notifyAllNodesRefresh() {
-    await refreshGlobalData();
-    for (const state of activeNodeStates) {
-        state.notify();
+    if (refreshDebounceTimer) {
+        clearTimeout(refreshDebounceTimer);
     }
+    refreshDebounceTimer = setTimeout(async () => {
+        refreshDebounceTimer = null;
+        await refreshGlobalData();
+        for (const state of activeNodeStates) {
+            state.notify();
+        }
+    }, 60);
 }
 
 /**
@@ -262,13 +270,19 @@ app.registerExtension({
                     if (!tileDraft) return;
                     presetModalManager.open(
                         {
+                            id: tileDraft.ref_preset_id || undefined,
+                            ref_preset_id: tileDraft.ref_preset_id || undefined,
+                            group_id: tileDraft.group_id || undefined,
+                            group_preset_id: tileDraft.group_preset_id || undefined,
+                            instance_id: tileDraft.instance_id,
                             title: tileDraft.title,
                             text: tileDraft.prompt,
                             categoryId: tileDraft.category_id,
                             previewHash: tileDraft.thumbnail,
                         },
                         {
-                            isGroupMember: false,
+                            isGroupMember: Boolean(tileDraft.group_id),
+                            groupPresetId: tileDraft.group_preset_id || null,
                             instanceId: tileDraft.instance_id,
                             state: state,
                         }
@@ -290,6 +304,7 @@ app.registerExtension({
                             id: tileDraft.ref_preset_id || undefined,
                             ref_preset_id: tileDraft.ref_preset_id || undefined,
                             group_id: tileDraft.group_id || undefined,
+                            group_preset_id: tileDraft.group_preset_id || undefined,
                             instance_id: tileDraft.instance_id,
                             title: tileDraft.title,
                             text: tileDraft.prompt,
@@ -297,7 +312,8 @@ app.registerExtension({
                             previewHash: tileDraft.thumbnail,
                         },
                         {
-                            isGroupMember: false,
+                            isGroupMember: Boolean(tileDraft.group_id),
+                            groupPresetId: tileDraft.group_preset_id || null,
                             instanceId: tileDraft.instance_id,
                             state: state,
                         }

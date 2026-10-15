@@ -2,19 +2,21 @@
 
 /**
  * 单个词条录入与编辑弹窗（PresetModalManager）。
- * 支持已有词条【保存】、新词条【新建】与组合成员【另存为】【保存至组】场景化按钮，
- * 严格执行全库项（词条名与组名）唯一重名校验（除自己外不可重名），
- * 组成员保存至组时精准更新组合内部对应成员，彻底杜绝全文拼接与组合元数据篡改。
+ * 适配 v2 归一化规范：词条是独立实体，组合维护 entryIds 列表。
+ * 支持普通词条【保存】/【新建】与组合成员【另存为】/【保存至组】场景化操作，
+ * 集成 Tag 智能快捷键（Ctrl+滚轮 / 方向键快速调权），
+ * 严格执行全库项（词条名与组名）唯一重名校验。
  */
 
-import { getThumbnailUrl, upsertEntry } from "../../api.js";
+import { getThumbnailUrl, upsertEntry, upsertGroup } from "../../api.js";
 import { isolateCanvasEvents } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
+import { bindPromptWeightShortcuts } from "../../utils/prompt_format.js";
 import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
 export class PresetModalManager {
     /**
-     * @param {() => { categories: any[], collections: any[], tags: any[], entries?: any[] }} getLibraryCallback
+     * @param {() => { categories: any[], collections: any[], tags: any[], entries?: any[], groups?: any[] }} getLibraryCallback
      * @param {(savedData?: any) => Promise<void>} onSavedCallback
      */
     constructor(getLibraryCallback, onSavedCallback) {
@@ -23,13 +25,14 @@ export class PresetModalManager {
         this.pendingImageFile = null;
         this.targetData = null;
         this.modalContext = null;
+        this.overlay = null;
         this.onPasteHandler = this.handleGlobalPaste.bind(this);
     }
 
     /**
      * 打开预设条目录入/编辑弹窗。
      * @param {any} initialData - 初始条目或磁贴数据
-     * @param {{ isGroupMember?: boolean, instanceId?: string, parentPresetId?: string, state?: any }} [context=null] - 上下文环境
+     * @param {{ isGroupMember?: boolean, instanceId?: string, groupPresetId?: string, parentPresetId?: string, state?: any }} [context=null] - 上下文环境
      */
     open(initialData = null, context = null) {
         this.close();
@@ -42,8 +45,7 @@ export class PresetModalManager {
         isolateCanvasEvents(this.overlay);
 
         const isGroupMember = Boolean(context?.isGroupMember || initialData?.group_id);
-        const isExistingEntry = Boolean(!isGroupMember && initialData && initialData.id);
-        const isNewEntry = Boolean(!isGroupMember && (!initialData || !initialData.id));
+        const isExistingEntry = Boolean(!isGroupMember && initialData && (initialData.id || initialData.ref_preset_id));
 
         const lib = this.getLibrary();
         const categories = lib.categories || [];
@@ -86,7 +88,7 @@ export class PresetModalManager {
           <div class="prompt-vault-form-row">
             <div class="prompt-vault-form-col">
               <label class="prompt-vault-form-label">标题 *</label>
-              <input type="text" class="prompt-vault-form-input" id="pv-form-title" placeholder="" />
+              <input type="text" class="prompt-vault-form-input" id="pv-form-title" placeholder="" autofocus />
             </div>
             <div class="prompt-vault-form-col">
               <label class="prompt-vault-form-label">所属分类</label>
@@ -97,7 +99,7 @@ export class PresetModalManager {
           </div>
 
           <div class="prompt-vault-form-col">
-            <label class="prompt-vault-form-label">提示词 Prompt 内容 *</label>
+            <label class="prompt-vault-form-label">提示词 Prompt 内容 * (支持 Ctrl+滚轮 / 方向键快速调权)</label>
             <textarea class="prompt-vault-form-textarea" id="pv-form-prompt" placeholder=""></textarea>
           </div>
 
@@ -144,7 +146,7 @@ export class PresetModalManager {
 
         document.body.appendChild(this.overlay);
         this.fillFormData(initialData);
-        this.bindEvents(isGroupMember);
+        this.bindEvents();
         window.addEventListener("paste", this.onPasteHandler, true);
     }
 
@@ -198,7 +200,7 @@ export class PresetModalManager {
         }
     }
 
-    bindEvents(isGroupMember) {
+    bindEvents() {
         const closeBtn = this.overlay.querySelector(".prompt-vault-modal-close");
         const cancelBtn = this.overlay.querySelector("#pv-modal-cancel");
         const saveBtn = this.overlay.querySelector("#pv-modal-save");
@@ -206,6 +208,11 @@ export class PresetModalManager {
         const saveToGroupBtn = this.overlay.querySelector("#pv-modal-save-to-group");
         const dropzone = this.overlay.querySelector("#pv-form-thumb-dropzone");
         const fileInput = this.overlay.querySelector("#pv-form-file-input");
+        const promptInput = this.overlay.querySelector("#pv-form-prompt");
+
+        if (promptInput) {
+            bindPromptWeightShortcuts(promptInput);
+        }
 
         const handleClose = () => this.close();
         if (closeBtn) closeBtn.addEventListener("click", handleClose);
@@ -313,9 +320,9 @@ export class PresetModalManager {
             return;
         }
 
-        const selfId = this.targetData && this.targetData.id ? this.targetData.id : null;
+        const selfId = (this.targetData && (this.targetData.id || this.targetData.ref_preset_id)) || null;
         if (!this.checkTitleUniqueness(title, selfId)) {
-            alert(`词库中已存在名为 [${title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名！`);
+            alert(`词库中已存在名为 [${title}] 的条目，提示词库中所有项名称均不可重名！`);
             return;
         }
 
@@ -377,7 +384,7 @@ export class PresetModalManager {
         }
 
         if (!this.checkTitleUniqueness(title, null)) {
-            alert(`词库中已存在名为 [${title}] 的条目（提示词或组合），提示词库中所有项名称均不可重名！`);
+            alert(`词库中已存在名为 [${title}] 的条目，提示词库中所有项名称均不可重名！`);
             return;
         }
 
@@ -418,11 +425,16 @@ export class PresetModalManager {
     }
 
     /**
-     * 将编辑内容精准同步至所属组合模板（更新组合内部对应成员，绝不触碰组合元数据与拼接文本）。
+     * 将编辑内容同步至组。
+     * 遵循 v2 归一化架构：组员在 lib.entries 中作为独立实体持久化，所属 group 维护其 entryIds。
      */
     async submitSaveToGroup() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+        const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
+        const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
+        const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
+        const note = (this.overlay.querySelector("#pv-form-note")?.value || "").trim();
 
         if (!title) {
             alert("请输入成员标题！");
@@ -433,26 +445,23 @@ export class PresetModalManager {
             return;
         }
 
-        const parentPresetId = this.modalContext?.parentPresetId || this.targetData?.ref_preset_id;
-        if (!parentPresetId) {
-            alert("未找到该组员所属的组合预设 ID，无法同步至组！");
+        const selfEntryId = this.targetData?.ref_preset_id || this.targetData?.id || null;
+        if (!this.checkTitleUniqueness(title, selfEntryId)) {
+            alert(`词库中已存在名为 [${title}] 的条目，词库中所有项名称不可重名！`);
             return;
         }
+
+        const groupPresetId =
+            this.modalContext?.groupPresetId ||
+            this.targetData?.group_preset_id ||
+            this.modalContext?.parentPresetId ||
+            null;
 
         const lib = this.getLibrary();
-        const entries = lib.entries || [];
-        const parentGroup = entries.find((e) => e.id === parentPresetId);
+        const groups = lib.groups || [];
+        const targetGroup = groupPresetId ? groups.find((g) => g.id === groupPresetId) : null;
 
-        if (!parentGroup) {
-            alert("词库中未找到所属的组合模板条目，可能已被删除！");
-            return;
-        }
-
-        const rawMembers = parentGroup.groupMembers || parentGroup.members || [];
-        if (!Array.isArray(rawMembers) || rawMembers.length === 0) {
-            alert("该条目并非有效的组合模板！");
-            return;
-        }
+        const tags = tagsRaw.split(/[,，]+/).map((t) => t.trim()).filter(Boolean);
 
         const saveToGroupBtn = this.overlay.querySelector("#pv-modal-save-to-group");
         if (saveToGroupBtn) {
@@ -461,56 +470,57 @@ export class PresetModalManager {
         }
 
         try {
-            const originalTitle = this.targetData?.title || "";
-            const originalPrompt = this.targetData?.text || this.targetData?.prompt || "";
-
-            let matchedMemberIdx = rawMembers.findIndex(
-                (m) => m.title === originalTitle && (m.text === originalPrompt || m.prompt === originalPrompt)
-            );
-
-            if (matchedMemberIdx === -1) {
-                matchedMemberIdx = rawMembers.findIndex((m) => m.title === originalTitle);
-            }
-
-            if (matchedMemberIdx === -1) {
-                matchedMemberIdx = 0;
-            }
-
-            const updatedMembers = [...rawMembers];
-            updatedMembers[matchedMemberIdx] = {
-                title: title,
+            // 1. 持久化保存该组员词条本身
+            const entryPayload = {
+                id: selfEntryId || undefined,
+                title,
                 text: prompt,
+                categoryId: categoryId || null,
+                tags: tags,
+                collections: folder ? [folder] : [],
+                note: note,
+                previewHash: this.targetData ? (this.targetData.previewHash || this.targetData.thumbnail || null) : null,
             };
 
-            const payload = {
-                id: parentGroup.id,
-                title: parentGroup.title,
-                text: "",
-                categoryId: parentGroup.categoryId || null,
-                groupMembers: updatedMembers,
-                tags: parentGroup.tags || [],
-                collections: parentGroup.collections || [],
-                note: parentGroup.note || "",
-                previewHash: parentGroup.previewHash || parentGroup.thumbnail || null,
-            };
+            const entryRes = await upsertEntry(entryPayload, this.pendingImageFile);
+            if (!entryRes || !entryRes.success || !entryRes.data) {
+                throw new Error(entryRes?.error || "保存组员条目失败");
+            }
+            const savedEntry = entryRes.data;
 
-            const result = await upsertEntry(payload);
-            if (result && result.success) {
-                const state = this.modalContext?.state;
-                const instanceId = this.modalContext?.instanceId || this.targetData?.instance_id;
-                if (state && instanceId) {
-                    state.markGroupMemberAsSaved(instanceId, {
-                        title: title,
-                        prompt: prompt,
+            // 2. 如果关联的组合已在词库中，确保该词条 ID 已登记在组合的 entryIds 中
+            if (targetGroup) {
+                const currentEntryIds = Array.isArray(targetGroup.entryIds) ? [...targetGroup.entryIds] : [];
+                if (!currentEntryIds.includes(savedEntry.id)) {
+                    currentEntryIds.push(savedEntry.id);
+                    await upsertGroup({
+                        id: targetGroup.id,
+                        title: targetGroup.title,
+                        categoryId: targetGroup.categoryId || null,
+                        entryIds: currentEntryIds,
+                        note: targetGroup.note || "",
                     });
                 }
-                if (typeof this.onSaved === "function") {
-                    await this.onSaved(result.data);
-                }
-                this.close();
-            } else {
-                alert(`更新至组失败: ${result?.error || "服务未响应"}`);
             }
+
+            // 3. 更新节点内部 state 实例
+            const state = this.modalContext?.state;
+            const instanceId = this.modalContext?.instanceId || this.targetData?.instance_id;
+            if (state && instanceId) {
+                state.markGroupMemberAsSaved(instanceId, {
+                    title: savedEntry.title,
+                    prompt: savedEntry.text || savedEntry.prompt,
+                    ref_preset_id: savedEntry.id,
+                });
+            }
+
+            if (typeof this.onSaved === "function") {
+                await this.onSaved(savedEntry);
+            }
+            this.close();
+        } catch (err) {
+            console.error("[PromptVault] Error saving to group:", err);
+            alert(`保存至组失败: ${String(err)}`);
         } finally {
             if (saveToGroupBtn) {
                 saveToGroupBtn.disabled = false;
