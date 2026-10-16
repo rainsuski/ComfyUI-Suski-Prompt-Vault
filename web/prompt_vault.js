@@ -68,23 +68,15 @@ async function refreshGlobalData() {
     }
 }
 
-let refreshDebounceTimer = null;
-
 /**
- * 防抖刷新全局词库缓存并通知所有活跃节点感知词库变动。
- * 合并本地主动操作与 WebSocket 后端广播，杜绝高频并发重绘。
+ * 刷新全局词库缓存并通知所有活跃节点感知词库变动。
+ * 保证 Promise 在数据拉取和状态分发完毕后再完成，杜绝弹窗重绘读到旧数据。
  */
 async function notifyAllNodesRefresh() {
-    if (refreshDebounceTimer) {
-        clearTimeout(refreshDebounceTimer);
+    await refreshGlobalData();
+    for (const state of activeNodeStates) {
+        state.notify();
     }
-    refreshDebounceTimer = setTimeout(async () => {
-        refreshDebounceTimer = null;
-        await refreshGlobalData();
-        for (const state of activeNodeStates) {
-            state.notify();
-        }
-    }, 60);
 }
 
 /**

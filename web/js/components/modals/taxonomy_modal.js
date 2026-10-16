@@ -292,7 +292,7 @@ export class TaxonomyModalManager {
                 const inlineInput = document.createElement("input");
                 inlineInput.type = "text";
                 inlineInput.className = "prompt-vault-inline-add-input";
-                inlineInput.placeholder = "";
+                inlineInput.placeholder = "输入子分类名称...";
 
                 const inlineSaveBtn = document.createElement("button");
                 inlineSaveBtn.type = "button";
@@ -565,7 +565,13 @@ export class TaxonomyModalManager {
             confirmBtn.disabled = true;
             confirmBtn.textContent = "删除中...";
             const deleteBranch = branchChk.checked;
-            await deleteCategory(node.id, deleteBranch);
+            const ok = await deleteCategory(node.id, deleteBranch);
+            if (!ok) {
+                alert("删除分类失败，服务未响应");
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = `${renderIcon("trash", 12)} <span>删除</span>`;
+                return;
+            }
             doClose();
             if (typeof this.onUpdated === "function") await this.onUpdated();
             this.renderContent();

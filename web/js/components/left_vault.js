@@ -8,6 +8,7 @@
  */
 
 import { deleteGroup } from "../api.js";
+import { getRecentUsageMap } from "../state.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { createTileElement } from "./tile.js";
@@ -93,6 +94,7 @@ export class LeftVaultComponent {
 
         this.viewMode = "single";
         this.isSearchActive = false;
+        this.sortByRecent = false;
         this.expandedGroupIds = new Set();
 
         this.filterCategory = "ALL";
@@ -254,7 +256,7 @@ export class LeftVaultComponent {
             this.filterRowContainer.appendChild(searchRow);
             requestAnimationFrame(() => searchInput.focus());
         } else {
-            // 常态：分类下拉 + 收藏夹下拉 + 搜索图标按钮
+            // 常态：分类下拉 + 收藏夹下拉 + 时钟排序按钮 + 搜索图标按钮
             const filterRow = document.createElement("div");
             filterRow.className = "prompt-vault-toolbar-row";
 
@@ -276,6 +278,23 @@ export class LeftVaultComponent {
                 this.renderList();
             });
             filterRow.appendChild(this.collectionSelect);
+
+            // 搜索按钮左侧添加：按最近使用优先排序时钟按钮
+            const clockSortBtn = document.createElement("button");
+            clockSortBtn.type = "button";
+            clockSortBtn.className = `prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon${this.sortByRecent ? " is-active" : ""}`;
+            clockSortBtn.innerHTML = getVectorIcon("clock", 13);
+            clockSortBtn.title = this.sortByRecent ? "当前：按最近使用优先（点击取消）" : "按最近使用优先排序";
+            if (this.sortByRecent) {
+                clockSortBtn.style.color = "var(--pv-primary, #3b82f6)";
+                clockSortBtn.style.borderColor = "var(--pv-primary, #3b82f6)";
+            }
+            clockSortBtn.addEventListener("click", () => {
+                this.sortByRecent = !this.sortByRecent;
+                this.renderFilterRow();
+                this.renderList();
+            });
+            filterRow.appendChild(clockSortBtn);
 
             const searchToggleBtn = document.createElement("button");
             searchToggleBtn.type = "button";
@@ -426,6 +445,15 @@ export class LeftVaultComponent {
             return true;
         });
 
+        if (this.sortByRecent) {
+            const recentMap = getRecentUsageMap();
+            filtered.sort((a, b) => {
+                const timeA = recentMap[a.id] || 0;
+                const timeB = recentMap[b.id] || 0;
+                return timeB - timeA;
+            });
+        }
+
         if (filtered.length === 0) {
             this.listViewport.innerHTML = `
         <div class="prompt-vault-empty-state">
@@ -491,6 +519,15 @@ export class LeftVaultComponent {
 
             return true;
         });
+
+        if (this.sortByRecent) {
+            const recentMap = getRecentUsageMap();
+            filtered.sort((a, b) => {
+                const timeA = recentMap[a.id] || 0;
+                const timeB = recentMap[b.id] || 0;
+                return timeB - timeA;
+            });
+        }
 
         if (filtered.length === 0) {
             this.listViewport.innerHTML = `

@@ -9,6 +9,38 @@
 
 import { clampAndRoundWeight } from "./utils/prompt_format.js";
 
+/** 词条最近使用记录在浏览器本地存储中的键名 */
+const RECENT_USAGE_STORAGE_KEY = "pv_recent_usage_timestamps";
+
+/**
+ * 记录词条或词组的最近使用时间（毫秒时间戳）到本地浏览器缓存。
+ * @param {string} id - 词条 entry.id 或组合 group.id
+ */
+export function recordRecentUsage(id) {
+    if (!id) return;
+    try {
+        const raw = localStorage.getItem(RECENT_USAGE_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : {};
+        map[id] = Date.now();
+        localStorage.setItem(RECENT_USAGE_STORAGE_KEY, JSON.stringify(map));
+    } catch (err) {
+        console.warn("[PromptVault] Failed to save recent usage to localStorage:", err);
+    }
+}
+
+/**
+ * 获取本地浏览器缓存的所有词条/词组最近使用时间映射字典。
+ * @returns {Record<string, number>} key 为 id，value 为毫秒时间戳
+ */
+export function getRecentUsageMap() {
+    try {
+        const raw = localStorage.getItem(RECENT_USAGE_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch (err) {
+        return {};
+    }
+}
+
 /**
  * 预设高对比度暗黑科技主题色板，循环分配给不同的动态组合。
  */
@@ -181,6 +213,10 @@ export class VaultNodeState {
      * @returns {SelectedTileInstance}
      */
     addTileFromEntry(entry, categories = []) {
+        if (entry && entry.id) {
+            recordRecentUsage(entry.id);
+        }
+
         const matchedCat = categories.find((c) => c.id === entry.categoryId);
         const catName = matchedCat ? matchedCat.name : "未分类";
 
@@ -220,6 +256,10 @@ export class VaultNodeState {
         const entryIds = Array.isArray(group.entryIds) ? group.entryIds : [];
         if (entryIds.length === 0) return [];
 
+        if (group && group.id) {
+            recordRecentUsage(group.id);
+        }
+
         const newGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
         const existingGroupIds = new Set(this.selectedTiles.map((t) => t.group_id).filter(Boolean));
         const colorIndex = existingGroupIds.size % GROUP_PALETTE.length;
@@ -228,6 +268,7 @@ export class VaultNodeState {
         const createdInstances = [];
 
         entryIds.forEach((eid, idx) => {
+            recordRecentUsage(eid);
             const entry = allEntries.find((e) => e.id === eid);
             if (!entry) return;
 
