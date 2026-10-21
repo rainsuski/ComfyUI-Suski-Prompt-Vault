@@ -9,6 +9,7 @@
  * 切换磁贴时归零光标位置，确保普通点击编辑完全不受干扰。
  */
 
+import { CHANNEL } from "../state.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { bindPromptWeightShortcuts } from "../utils/prompt_format.js";
@@ -76,7 +77,20 @@ export class RightEditorComponent {
         this.renderedInstanceId = null;
 
         this.initDOM();
-        this.state.subscribe(() => this.updateView());
+
+        // 切换激活项 / 结构变化 → 重绘表单；内容变化 → 仅在影响当前磁贴时重绘
+        this.state.on(CHANNEL.SELECTION, () => this.updateView());
+        this.state.on(CHANNEL.STRUCTURE, () => this.updateView());
+        this.state.on(CHANNEL.CONTENT, (detail) => {
+            if (!detail || !detail.instanceId || detail.instanceId === this.state.activeInstanceId) {
+                this.updateView();
+            }
+        });
+        // 分类下拉只在词库变化时重建，避免每次按键都重建 <select>
+        this.state.on(CHANNEL.LIBRARY, () => {
+            this.refreshCategoryOptions();
+            this.updateView();
+        });
     }
 
     initDOM() {
@@ -253,6 +267,7 @@ export class RightEditorComponent {
         this.body.appendChild(this.formContainer);
         this.container.appendChild(this.body);
 
+        this.refreshCategoryOptions();
         this.updateView();
     }
 
@@ -274,8 +289,18 @@ export class RightEditorComponent {
         }
     }
 
+    /**
+     * 在控件未聚焦时回写值，避免打断正在进行的输入（含光标位置与 IME 组合态）。
+     * @param {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement|null} el
+     * @param {string} value
+     */
+    setIfIdle(el, value) {
+        if (!el) return;
+        if (document.activeElement === el) return;
+        if (el.value !== value) el.value = value;
+    }
+
     updateView() {
-        this.refreshCategoryOptions();
         const activeTile = this.state.getActiveTile();
 
         if (!activeTile) {
@@ -296,10 +321,11 @@ export class RightEditorComponent {
             this.textarea.value = activeTile.prompt || "";
             // 切换磁贴时将光标归零至文本开头，消除隐式停在最末尾的副作用
             this.textarea.setSelectionRange(0, 0);
-        } else if (!activeTile.is_dirty) {
-            this.titleInput.value = activeTile.title || "";
-            this.catSelect.value = activeTile.category_id || "";
-            this.textarea.value = activeTile.prompt || "";
+        } else {
+            // 同一磁贴的字段回写：正在编辑的控件绝不覆盖，避免光标被弹到末尾
+            this.setIfIdle(this.titleInput, activeTile.title || "");
+            this.setIfIdle(this.catSelect, activeTile.category_id || "");
+            this.setIfIdle(this.textarea, activeTile.prompt || "");
         }
 
         if (this.statusLabel) {

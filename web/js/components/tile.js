@@ -3,9 +3,12 @@
 /**
  * 磁贴卡片（Tile）核心渲染组件。
  * 遵循归一化模型：普通词条与组员使用相同的数据渲染标准。
- * 支持词条视图微型组关联徽标与多组跳转菜单、手风琴二级磁贴轻量交互、
- * 运行态单轨几何树状连线、微光锚点转角贴合卡片、连线悬停 160ms 防抖防闪烁、
- * 鼠标悬停时右侧浮现圆角胶囊操作条、100% 纯净矢量 SVG 图标（零 Emoji）。
+ *
+ * 渲染契约：
+ * - createTileElement() 只负责"建骨架 + 挂事件"，建完立即调用一次 applyTileState()；
+ * - applyTileState() 是唯一把数据映射到视觉的函数，内容变更时重复调用即可，
+ *   不销毁节点、不移动 DOM、不影响滚动位置与悬停状态。
+ * 轨道连线由中栏的 updateSelectionVisuals() 统一填充，本模块只建空轨道容器。
  */
 
 import { getThumbnailUrl } from "../api.js";
@@ -16,7 +19,8 @@ import { formatWeightBadgeText } from "../utils/prompt_format.js";
 let activePopoverElement = null;
 let activePopoverTimer = null;
 let activeJumpMenuElement = null;
-let hoverGroupTimeout = null;
+/** 当前浮层（含待弹出）锚定的实例 ID，用于内容变更时精准关闭 */
+let popoverTargetInstanceId = null;
 
 function removeActivePopover() {
     if (activePopoverTimer) {
@@ -27,6 +31,18 @@ function removeActivePopover() {
         activePopoverElement.parentNode.removeChild(activePopoverElement);
     }
     activePopoverElement = null;
+    popoverTargetInstanceId = null;
+}
+
+/**
+ * 若浮层正锚定在该实例上，则立即关闭。
+ * 供内容局部更新前调用，避免浮层指向已变更的数据。
+ * @param {string|null} instanceId
+ */
+export function closePopoverFor(instanceId) {
+    if (instanceId && popoverTargetInstanceId === instanceId) {
+        removeActivePopover();
+    }
 }
 
 function removeActiveJumpMenu() {
@@ -181,56 +197,122 @@ function showJumpMenu(triggerEl, groups, onJumpToGroup) {
     menu.style.top = `${rect.bottom + 4}px`;
 }
 
-function createTrackElement(trackRole) {
-    const track = document.createElement("div");
-    track.className = "prompt-vault-tile-track";
+/* =========================================================================
+   数据 → 视觉 的唯一映射
+   ========================================================================= */
 
-    if (trackRole === "none") {
-        return track;
+function applyThumbnail(thumbBox, data) {
+    const path = data.previewHash || data.thumbnail || "";
+    const url = path ? getThumbnailUrl(path) : "";
+    const currentImg = thumbBox.querySelector("img");
+    const placeholder = thumbBox.querySelector(".pv-thumb-placeholder");
+
+    if (!url) {
+        if (currentImg) currentImg.remove();
+        if (!placeholder) {
+            const ph = document.createElement("span");
+            ph.className = "pv-thumb-placeholder";
+            ph.innerHTML = renderIcon("messageSquare", 16);
+            thumbBox.appendChild(ph);
+        }
+        return;
     }
 
-    if (trackRole === "first") {
-        const vBottom = document.createElement("div");
-        vBottom.className = "prompt-vault-track-v-bottom";
-        const hBranch = document.createElement("div");
-        hBranch.className = "prompt-vault-track-h-branch";
-        const anchor = document.createElement("div");
-        anchor.className = "prompt-vault-track-dot-anchor";
-
-        track.appendChild(vBottom);
-        track.appendChild(hBranch);
-        track.appendChild(anchor);
-    } else if (trackRole === "branch") {
-        const vFull = document.createElement("div");
-        vFull.className = "prompt-vault-track-v-full";
-        const hBranch = document.createElement("div");
-        hBranch.className = "prompt-vault-track-h-branch";
-        const anchor = document.createElement("div");
-        anchor.className = "prompt-vault-track-dot-anchor";
-
-        track.appendChild(vFull);
-        track.appendChild(hBranch);
-        track.appendChild(anchor);
-    } else if (trackRole === "last") {
-        const vTop = document.createElement("div");
-        vTop.className = "prompt-vault-track-v-top";
-        const hBranch = document.createElement("div");
-        hBranch.className = "prompt-vault-track-h-branch";
-        const anchor = document.createElement("div");
-        anchor.className = "prompt-vault-track-dot-anchor";
-
-        track.appendChild(vTop);
-        track.appendChild(hBranch);
-        track.appendChild(anchor);
-    } else if (trackRole === "pass") {
-        track.classList.add("prompt-vault-track-pass");
-        const vFull = document.createElement("div");
-        vFull.className = "prompt-vault-track-v-full";
-        track.appendChild(vFull);
+    if (placeholder) placeholder.remove();
+    if (currentImg) {
+        if (currentImg.getAttribute("src") !== url) {
+            currentImg.setAttribute("src", url);
+            currentImg.alt = data.title || "thumbnail";
+        }
+        return;
     }
 
-    return track;
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = data.title || "thumbnail";
+    img.loading = "lazy";
+    img.onerror = () => {
+        thumbBox.innerHTML = renderIcon("messageSquare", 16);
+    };
+    thumbBox.appendChild(img);
 }
+
+function applyCategoryBadge(cardEl, data, categories) {
+    const badge = cardEl.querySelector(".prompt-vault-tile-badge");
+    if (!badge) return;
+
+    const matched = (categories || []).find(
+        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
+    );
+    if (!matched) {
+        badge.hidden = true;
+        badge.textContent = "";
+        return;
+    }
+
+    badge.hidden = false;
+    badge.textContent = matched.name;
+    if (matched.color) {
+        badge.style.backgroundColor = `${matched.color}22`;
+        badge.style.color = matched.color;
+        badge.style.borderColor = `${matched.color}44`;
+    } else {
+        badge.style.backgroundColor = "";
+        badge.style.color = "";
+        badge.style.borderColor = "";
+    }
+}
+
+/**
+ * 将磁贴数据映射到已存在的 DOM 节点上。
+ * 不创建/删除结构性节点（缩略图除外），因此不打断滚动、悬停与拖拽。
+ * 词库模式（entry）与已选模式（tile instance）共用同一套字段回退规则。
+ * @param {HTMLElement} cardEl - `.prompt-vault-tile` 元素
+ * @param {any} data - 词条实体或已选磁贴实例
+ * @param {{ categories?: any[] }} [ctx]
+ */
+export function applyTileState(cardEl, data, { categories = [] } = {}) {
+    if (!cardEl || !data) return;
+
+    const titleEl = cardEl.querySelector(".prompt-vault-tile-title");
+    if (titleEl) {
+        const nextTitle = data.title || "未命名词条";
+        if (titleEl.textContent !== nextTitle) titleEl.textContent = nextTitle;
+        titleEl.title = data.title || "";
+    }
+
+    const snippetEl = cardEl.querySelector(".prompt-vault-tile-snippet");
+    if (snippetEl) {
+        const nextSnippet = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
+        if (snippetEl.textContent !== nextSnippet) snippetEl.textContent = nextSnippet;
+    }
+
+    const thumbBox = cardEl.querySelector(".prompt-vault-tile-thumb");
+    if (thumbBox) applyThumbnail(thumbBox, data);
+
+    applyCategoryBadge(cardEl, data, categories);
+
+    const dirtyBadge = cardEl.querySelector(".prompt-vault-tile-dirty-badge");
+    if (dirtyBadge) dirtyBadge.hidden = !data.is_dirty;
+
+    const weightBadge = cardEl.querySelector(".prompt-vault-tile-weight");
+    if (weightBadge) {
+        weightBadge.textContent = `× ${formatWeightBadgeText(data.weight == null ? 1.0 : data.weight)}`;
+    }
+
+    const isMuted = data.enabled === false;
+    cardEl.classList.toggle("is-muted", isMuted);
+
+    const muteBtn = cardEl.querySelector(".prompt-vault-tile-mute");
+    if (muteBtn) {
+        muteBtn.innerHTML = renderIcon(isMuted ? "eyeOff" : "eye", 13);
+        muteBtn.title = isMuted ? "启用该词条" : "静音该词条 (不参与拼接)";
+    }
+}
+
+/* =========================================================================
+   磁贴骨架构建
+   ========================================================================= */
 
 export function createTileElement({
     data,
@@ -245,53 +327,39 @@ export function createTileElement({
     onToggleFavorite,
     onDeleteEntry,
     onJumpToGroup,
-    trackRole = "none",
-    groupColor = null,
-    isGroupActiveMember = false,
 }) {
     const isSelectedMode = mode === "selected";
     const instanceId = isSelectedMode ? data.instance_id : null;
-    const isMuted = isSelectedMode && data.enabled === false;
-    const isDirty = isSelectedMode && Boolean(data.is_dirty);
-    const hasGroup = Boolean(data.group_id);
+    const memberships = isSelectedMode && Array.isArray(data.groups) ? data.groups : [];
+    const hasGroup = memberships.length > 0;
 
     const tile = document.createElement("div");
     tile.className = "prompt-vault-tile";
-    if (isActive) tile.classList.add("is-active");
-    if (isMultiSelected) tile.classList.add("is-multi-selected");
-    if (isMuted) tile.classList.add("is-muted");
-    if (!isSelectedMode && isAlreadyAdded) tile.classList.add("is-vault-selected");
-    if (isGroupActiveMember) tile.classList.add("is-group-active-member");
-
     tile.dataset.mode = mode;
     if (instanceId) tile.dataset.instanceId = instanceId;
+    if (!isSelectedMode && data.id) tile.dataset.entryId = data.id;
+    if (isActive) tile.classList.add("is-active");
+    if (isMultiSelected) tile.classList.add("is-multi-selected");
+    if (!isSelectedMode && isAlreadyAdded) tile.classList.add("is-vault-selected");
 
     isolateCanvasEvents(tile);
 
-    // 鼠标移入：取消移出防抖定时器，立即亮起当前组合连线
+    // 鼠标移入：建立临时预览（仍含上一次聚焦组则保持，否则切到本磁贴的首个归属组并记住）
     tile.addEventListener("mouseenter", () => {
-        if (hoverGroupTimeout) {
-            clearTimeout(hoverGroupTimeout);
-            hoverGroupTimeout = null;
-        }
-
-        if (isSelectedMode && data.group_id) {
-            state.setHoveredGroupId(data.group_id);
+        if (isSelectedMode) {
+            state.beginHoverPreview(data);
         }
         if (activePopoverTimer) clearTimeout(activePopoverTimer);
+        popoverTargetInstanceId = instanceId;
         activePopoverTimer = setTimeout(() => {
             showPopover(tile, data, categories, tagsDict);
         }, 450);
     });
 
-    // 鼠标移出：160ms 延迟消除，避免在磁贴行间缝隙划过时产生闪烁
+    // 鼠标移出：结束预览（回落到上一次聚焦），并关闭浮层
     tile.addEventListener("mouseleave", () => {
-        if (isSelectedMode && data.group_id) {
-            if (hoverGroupTimeout) clearTimeout(hoverGroupTimeout);
-            hoverGroupTimeout = setTimeout(() => {
-                state.setHoveredGroupId(null);
-                hoverGroupTimeout = null;
-            }, 160);
+        if (isSelectedMode) {
+            state.endHoverPreview();
         }
         removeActivePopover();
     });
@@ -320,19 +388,6 @@ export function createTileElement({
 
     const thumbBox = document.createElement("div");
     thumbBox.className = "prompt-vault-tile-thumb";
-    const thumbPath = data.previewHash || data.thumbnail;
-    if (thumbPath) {
-        const img = document.createElement("img");
-        img.src = getThumbnailUrl(thumbPath);
-        img.alt = data.title || "thumbnail";
-        img.loading = "lazy";
-        img.onerror = () => {
-            thumbBox.innerHTML = renderIcon("messageSquare", 16);
-        };
-        thumbBox.appendChild(img);
-    } else {
-        thumbBox.innerHTML = renderIcon("messageSquare", 16);
-    }
     tile.appendChild(thumbBox);
 
     const infoBox = document.createElement("div");
@@ -341,19 +396,19 @@ export function createTileElement({
     const titleRow = document.createElement("div");
     titleRow.className = "prompt-vault-tile-title-row";
 
-    if (isSelectedMode && hasGroup && data.group_color) {
-        const dot = document.createElement("span");
-        dot.className = "prompt-vault-tile-group-dot";
-        dot.style.color = data.group_color;
-        dot.style.backgroundColor = data.group_color;
-        dot.title = data.group_title ? `所属组合：${data.group_title}` : "组合成员";
-        titleRow.appendChild(dot);
+    if (isSelectedMode && memberships.length > 0) {
+        memberships.slice(0, 3).forEach((membership) => {
+            const dot = document.createElement("span");
+            dot.className = "prompt-vault-tile-group-dot";
+            dot.style.color = membership.color;
+            dot.style.backgroundColor = membership.color;
+            dot.title = membership.title ? `所属组合：${membership.title}` : "组合成员";
+            titleRow.appendChild(dot);
+        });
     }
 
     const titleText = document.createElement("span");
     titleText.className = "prompt-vault-tile-title";
-    titleText.textContent = data.title || "未命名词条";
-    titleText.title = data.title || "";
     titleRow.appendChild(titleText);
 
     // 词条视图：极简微型跳转标记
@@ -379,33 +434,21 @@ export function createTileElement({
         titleRow.appendChild(indicator);
     }
 
-    const matchedCat = categories.find(
-        (c) => c.id === data.categoryId || c.id === data.category_id || c.name === data.category
-    );
-    if (matchedCat) {
-        const catBadge = document.createElement("span");
-        catBadge.className = "prompt-vault-tile-badge";
-        catBadge.textContent = matchedCat.name;
-        if (matchedCat.color) {
-            catBadge.style.backgroundColor = `${matchedCat.color}22`;
-            catBadge.style.color = matchedCat.color;
-            catBadge.style.borderColor = `${matchedCat.color}44`;
-        }
-        titleRow.appendChild(catBadge);
-    }
+    const catBadge = document.createElement("span");
+    catBadge.className = "prompt-vault-tile-badge";
+    catBadge.hidden = true;
+    titleRow.appendChild(catBadge);
 
-    if (isDirty) {
-        const dirtyBadge = document.createElement("span");
-        dirtyBadge.className = "prompt-vault-tile-dirty-badge";
-        dirtyBadge.textContent = "已修改";
-        titleRow.appendChild(dirtyBadge);
-    }
+    const dirtyBadge = document.createElement("span");
+    dirtyBadge.className = "prompt-vault-tile-dirty-badge";
+    dirtyBadge.textContent = "已修改";
+    dirtyBadge.hidden = true;
+    titleRow.appendChild(dirtyBadge);
+
     infoBox.appendChild(titleRow);
 
     const snippet = document.createElement("div");
     snippet.className = "prompt-vault-tile-snippet";
-    const promptSnippetText = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
-    snippet.textContent = promptSnippetText;
     infoBox.appendChild(snippet);
     tile.appendChild(infoBox);
 
@@ -417,7 +460,6 @@ export function createTileElement({
         const weightBadge = document.createElement("div");
         weightBadge.className = "prompt-vault-tile-weight";
         weightBadge.title = "滚轮上下滚动调节权重 (步长 0.1)";
-        weightBadge.textContent = `× ${formatWeightBadgeText(data.weight || 1.0)}`;
 
         weightBadge.addEventListener(
             "wheel",
@@ -433,9 +475,7 @@ export function createTileElement({
 
         const muteBtn = document.createElement("button");
         muteBtn.type = "button";
-        muteBtn.className = "prompt-vault-tile-btn";
-        muteBtn.title = isMuted ? "启用该词条" : "静音该词条 (不参与拼接)";
-        muteBtn.innerHTML = renderIcon(isMuted ? "eyeOff" : "eye", 13);
+        muteBtn.className = "prompt-vault-tile-btn prompt-vault-tile-mute";
         muteBtn.addEventListener("click", (event) => {
             event.stopPropagation();
             state.toggleTileEnabled(instanceId);
@@ -444,10 +484,10 @@ export function createTileElement({
     }
 
     if (!isSelectedMode) {
-        const isFavorited = (Array.isArray(data.collections) && data.collections.length > 0) || Boolean(data.favorite);
         const starBtn = document.createElement("button");
         starBtn.type = "button";
         starBtn.className = "prompt-vault-tile-btn";
+        const isFavorited = (Array.isArray(data.collections) && data.collections.length > 0) || Boolean(data.favorite);
         if (isFavorited) starBtn.classList.add("is-starred");
         starBtn.title = isFavorited ? "已收藏" : "加入收藏夹";
         starBtn.innerHTML = renderIcon(isFavorited ? "starFilled" : "star", 13);
@@ -501,7 +541,9 @@ export function createTileElement({
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "prompt-vault-tile-btn is-danger";
-        removeBtn.title = hasGroup ? "移除该组合 (原子整组移除)" : "移出已选列表";
+        removeBtn.title = hasGroup
+            ? "移出该词条 (不影响同组其它词条)"
+            : "移出已选列表";
         removeBtn.innerHTML = renderIcon("x", 13);
         removeBtn.addEventListener("click", (event) => {
             event.stopPropagation();
@@ -513,6 +555,9 @@ export function createTileElement({
 
     tile.appendChild(actionsBar);
 
+    // 骨架建完后统一填充一次，之后内容变更只需重复调用 applyTileState
+    applyTileState(tile, data, { categories });
+
     if (!isSelectedMode) {
         return tile;
     }
@@ -521,12 +566,10 @@ export function createTileElement({
     row.className = "prompt-vault-tile-row";
     row.dataset.instanceId = instanceId;
 
-    if (groupColor) {
-        row.style.setProperty("--pv-group-color", groupColor);
-        row.style.setProperty("--pv-group-glow", `${groupColor}44`);
-    }
+    // 轨道容器留空，由中栏 updateSelectionVisuals() 统一渲染角色
+    const trackElement = document.createElement("div");
+    trackElement.className = "prompt-vault-tile-track";
 
-    const trackElement = createTrackElement(trackRole);
     row.appendChild(trackElement);
     row.appendChild(tile);
 

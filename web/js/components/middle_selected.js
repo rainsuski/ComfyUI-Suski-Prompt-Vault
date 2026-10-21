@@ -3,14 +3,20 @@
 /**
  * 中栏：已选提示词列表（Selected Prompts）组件。
  * 展示当前节点已选装配的磁贴序列、计算活跃聚焦组几何连线区间、
- * 呈现单行防塌陷多选批量操作条、集成悬停延时防抖避免缝隙闪烁、
- * 采用轻量局部轨道 DOM 状态更新、支持批量拖拽排序与清空。
+ * 呈现单行防塌陷多选批量操作条、集成悬停延时防抖避免缝隙闪烁。
+ *
+ * 渲染策略（按通道分流，避免无关重建）：
+ * - structure → 重建行结构（保留滚动位置），重建后统一由 updateSelectionVisuals 填充轨道；
+ * - selection → 只切换 class 与轨道，不触碰 DOM 结构；
+ * - content   → 只对目标行调用 applyTileState，不重建、不移动节点；
+ * - library   → 就地刷新全部行的字段（分类改名等），同样不重建。
  */
 
+import { CHANNEL, findMembership } from "../state.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { SaveGroupModalManager } from "./modal.js";
-import { createTileElement } from "./tile.js";
+import { applyTileState, closePopoverFor, createTileElement } from "./tile.js";
 
 export class MiddleSelectedComponent {
     /**
@@ -45,10 +51,13 @@ export class MiddleSelectedComponent {
 
         this.initDOM();
 
-        this.state.subscribe(() => this.renderList());
+        this.state.on(CHANNEL.STRUCTURE, () => this.renderList());
+        this.state.on(CHANNEL.SELECTION, () => this.updateSelectionVisuals());
+        this.state.on(CHANNEL.CONTENT, (detail) => this.patchTile(detail && detail.instanceId));
+        this.state.on(CHANNEL.LIBRARY, () => this.refreshAllRows());
 
-        this.state.subscribeHover((hoveredGroupId) => {
-            this.updateHoverTrackVisuals(hoveredGroupId);
+        this.state.subscribeFocus(() => {
+            this.updateHoverTrackVisuals();
         });
     }
 
@@ -209,23 +218,26 @@ export class MiddleSelectedComponent {
         this.batchBarContainer.appendChild(batchBar);
     }
 
-    updateHoverTrackVisuals(hoveredGroupId) {
+    /**
+     * 按当前聚焦组重算每行的轨道角色与高亮。
+     * 这是轨道渲染的唯一实现：重建后、选中变化、聚焦变化都走这里，避免多套逻辑漂移。
+     */
+    updateHoverTrackVisuals() {
         const tiles = this.state.selectedTiles;
-        const activeTile = this.state.getActiveTile();
-        const focusedGroupId = hoveredGroupId || (activeTile ? activeTile.group_id : null);
+        const displayGroupId = this.state.getRenderableFocusGroupId();
 
         let groupMinIdx = -1;
         let groupMaxIdx = -1;
         let focusedGroupColor = null;
 
-        if (focusedGroupId) {
+        if (displayGroupId) {
             const memberIndices = [];
             tiles.forEach((t, idx) => {
-                if (t.group_id === focusedGroupId) {
-                    memberIndices.push(idx);
-                    if (!focusedGroupColor && t.group_color) {
-                        focusedGroupColor = t.group_color;
-                    }
+                const membership = findMembership(t, displayGroupId);
+                if (!membership) return;
+                memberIndices.push(idx);
+                if (!focusedGroupColor && membership.color) {
+                    focusedGroupColor = membership.color;
                 }
             });
 
@@ -242,10 +254,11 @@ export class MiddleSelectedComponent {
             if (!tile) return;
 
             const actualIndex = tiles.indexOf(tile);
-            const isMemberOfFocusedGroup = Boolean(focusedGroupId && tile.group_id === focusedGroupId);
+            const membership = displayGroupId ? findMembership(tile, displayGroupId) : null;
+            const isMemberOfFocusedGroup = Boolean(membership);
 
             let trackRole = "none";
-            if (focusedGroupId && groupMinIdx !== -1 && groupMaxIdx !== -1) {
+            if (displayGroupId && groupMinIdx !== -1 && groupMaxIdx !== -1) {
                 if (actualIndex >= groupMinIdx && actualIndex <= groupMaxIdx) {
                     if (actualIndex === groupMinIdx) {
                         trackRole = "first";
@@ -261,14 +274,10 @@ export class MiddleSelectedComponent {
 
             const card = row.querySelector(".prompt-vault-tile");
             if (card) {
-                if (isMemberOfFocusedGroup) {
-                    card.classList.add("is-group-active-member");
-                } else {
-                    card.classList.remove("is-group-active-member");
-                }
+                card.classList.toggle("is-group-active-member", isMemberOfFocusedGroup);
             }
 
-            const finalColor = focusedGroupColor || tile.group_color;
+            const finalColor = focusedGroupColor || (membership ? membership.color : null);
             if (finalColor) {
                 row.style.setProperty("--pv-group-color", finalColor);
                 row.style.setProperty("--pv-group-glow", `${finalColor}44`);
@@ -280,75 +289,96 @@ export class MiddleSelectedComponent {
                 track.className = "prompt-vault-tile-track";
 
                 if (trackRole === "first") {
-                    const vBottom = document.createElement("div");
-                    vBottom.className = "prompt-vault-track-v-bottom";
-                    const hBranch = document.createElement("div");
-                    hBranch.className = "prompt-vault-track-h-branch";
-                    const anchor = document.createElement("div");
-                    anchor.className = "prompt-vault-track-dot-anchor";
-                    track.appendChild(vBottom);
-                    track.appendChild(hBranch);
-                    track.appendChild(anchor);
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-v-bottom"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-h-branch"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-dot-anchor"));
                 } else if (trackRole === "branch") {
-                    const vFull = document.createElement("div");
-                    vFull.className = "prompt-vault-track-v-full";
-                    const hBranch = document.createElement("div");
-                    hBranch.className = "prompt-vault-track-h-branch";
-                    const anchor = document.createElement("div");
-                    anchor.className = "prompt-vault-track-dot-anchor";
-                    track.appendChild(vFull);
-                    track.appendChild(hBranch);
-                    track.appendChild(anchor);
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-v-full"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-h-branch"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-dot-anchor"));
                 } else if (trackRole === "last") {
-                    const vTop = document.createElement("div");
-                    vTop.className = "prompt-vault-track-v-top";
-                    const hBranch = document.createElement("div");
-                    hBranch.className = "prompt-vault-track-h-branch";
-                    const anchor = document.createElement("div");
-                    anchor.className = "prompt-vault-track-dot-anchor";
-                    track.appendChild(vTop);
-                    track.appendChild(hBranch);
-                    track.appendChild(anchor);
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-v-top"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-h-branch"));
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-dot-anchor"));
                 } else if (trackRole === "pass") {
                     track.classList.add("prompt-vault-track-pass");
-                    const vFull = document.createElement("div");
-                    vFull.className = "prompt-vault-track-v-full";
-                    track.appendChild(vFull);
+                    track.appendChild(this.buildTrackPart("prompt-vault-track-v-full"));
                 }
             }
         });
     }
 
-    renderList() {
+    buildTrackPart(className) {
+        const el = document.createElement("div");
+        el.className = className;
+        return el;
+    }
+
+    /**
+     * 选择集或激活项变化时的轻量刷新：只切 class、重算轨道、更新批量条与状态栏。
+     */
+    updateSelectionVisuals() {
         this.renderBatchBar();
 
-        const tiles = this.state.selectedTiles;
-        const activeTile = this.state.getActiveTile();
-        const activeTileId = this.state.activeInstanceId;
-        const categoriesConfig = this.getCategoriesConfig();
+        const activeId = this.state.activeInstanceId;
+        this.listViewport.querySelectorAll(".prompt-vault-tile-row").forEach((row) => {
+            const card = row.querySelector(".prompt-vault-tile");
+            if (!card) return;
+            const instanceId = row.dataset.instanceId;
+            card.classList.toggle("is-active", instanceId === activeId);
+            card.classList.toggle("is-multi-selected", this.state.isMultiSelected(instanceId));
+        });
 
-        const focusedGroupId = this.state.hoveredGroupId || (activeTile ? activeTile.group_id : null);
+        this.updateHoverTrackVisuals();
+        this.updateStatusText();
+    }
 
-        let groupMinIdx = -1;
-        let groupMaxIdx = -1;
-        let focusedGroupColor = null;
+    /**
+     * 单条内容变更：只刷新目标行，不重建列表。
+     * @param {string|null} instanceId
+     */
+    patchTile(instanceId) {
+        if (!instanceId) return;
 
-        if (focusedGroupId) {
-            const memberIndices = [];
-            tiles.forEach((t, idx) => {
-                if (t.group_id === focusedGroupId) {
-                    memberIndices.push(idx);
-                    if (!focusedGroupColor && t.group_color) {
-                        focusedGroupColor = t.group_color;
-                    }
-                }
-            });
+        closePopoverFor(instanceId);
 
-            if (memberIndices.length > 0) {
-                groupMinIdx = Math.min(...memberIndices);
-                groupMaxIdx = Math.max(...memberIndices);
-            }
+        const row = this.listViewport.querySelector(
+            `[data-instance-id="${CSS.escape(instanceId)}"]`
+        );
+        const tile = this.state.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (row && tile) {
+            const card = row.querySelector(".prompt-vault-tile");
+            if (card) applyTileState(card, tile, { categories: this.getCategoriesConfig() });
         }
+
+        this.updateStatusText();
+    }
+
+    /**
+     * 词库侧数据变化（分类改名、缩略图更新等）：就地刷新全部行字段，不重建。
+     */
+    refreshAllRows() {
+        const categories = this.getCategoriesConfig();
+        this.listViewport.querySelectorAll(".prompt-vault-tile-row").forEach((row) => {
+            const tile = this.state.selectedTiles.find((t) => t.instance_id === row.dataset.instanceId);
+            const card = row.querySelector(".prompt-vault-tile");
+            if (tile && card) applyTileState(card, tile, { categories });
+        });
+    }
+
+    updateStatusText() {
+        const tiles = this.state.selectedTiles;
+        const enabledCount = tiles.filter((t) => t.enabled !== false).length;
+        const multiCount = this.state.multiSelectedIds.size;
+        const multiSuffix = multiCount > 0 ? ` (已多选 ${multiCount} 项)` : "";
+        this.statusText.textContent = `${enabledCount} 项启用 / 共 ${tiles.length} 项${multiSuffix}`;
+    }
+
+    renderList() {
+        const prevScrollTop = this.listViewport.scrollTop;
+
+        const tiles = this.state.selectedTiles;
+        const categoriesConfig = this.getCategoriesConfig();
 
         const filtered = tiles.filter((tile) => {
             if (!this.searchKeyword) return true;
@@ -375,50 +405,22 @@ export class MiddleSelectedComponent {
       `;
         } else {
             filtered.forEach((tile) => {
-                const actualIndex = tiles.indexOf(tile);
-                const isActive = tile.instance_id === activeTileId;
-                const isMultiSelected = this.state.isMultiSelected(tile.instance_id);
-                const isMemberOfFocusedGroup = Boolean(focusedGroupId && tile.group_id === focusedGroupId);
-
-                let trackRole = "none";
-                if (focusedGroupId && groupMinIdx !== -1 && groupMaxIdx !== -1) {
-                    if (actualIndex >= groupMinIdx && actualIndex <= groupMaxIdx) {
-                        if (actualIndex === groupMinIdx) {
-                            trackRole = "first";
-                        } else if (actualIndex === groupMaxIdx) {
-                            trackRole = "last";
-                        } else if (isMemberOfFocusedGroup) {
-                            trackRole = "branch";
-                        } else {
-                            trackRole = "pass";
-                        }
-                    }
-                }
-
                 const tileRowElement = createTileElement({
                     data: tile,
                     mode: "selected",
                     state: this.state,
-                    isActive: isActive,
-                    isAlreadyAdded: false,
-                    isMultiSelected: isMultiSelected,
                     categories: categoriesConfig,
                     tagsDict: [],
                     belongingGroups: [],
                     onToggleFavorite: null,
                     onDeleteEntry: null,
                     onJumpToGroup: null,
-                    trackRole: trackRole,
-                    groupColor: focusedGroupColor || tile.group_color,
-                    isGroupActiveMember: isMemberOfFocusedGroup,
                 });
                 this.listViewport.appendChild(tileRowElement);
             });
         }
 
-        const enabledCount = tiles.filter((t) => t.enabled !== false).length;
-        const multiCount = this.state.multiSelectedIds.size;
-        const multiSuffix = multiCount > 0 ? ` (已多选 ${multiCount} 项)` : "";
-        this.statusText.textContent = `${enabledCount} 项启用 / 共 ${tiles.length} 项${multiSuffix}`;
+        this.listViewport.scrollTop = prevScrollTop;
+        this.updateSelectionVisuals();
     }
 }

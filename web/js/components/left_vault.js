@@ -8,7 +8,7 @@
  */
 
 import { deleteGroup } from "../api.js";
-import { getRecentUsageMap } from "../state.js";
+import { CHANNEL, getRecentUsageMap } from "../state.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { createTileElement } from "./tile.js";
@@ -102,7 +102,32 @@ export class LeftVaultComponent {
         this.searchKeyword = "";
 
         this.initDOM();
-        this.state.subscribe(() => this.renderList());
+        // 词库变化（CRUD / 导入 / 广播）才重建列表
+        this.state.on(CHANNEL.LIBRARY, () => this.renderList());
+        // 磁贴增删只影响"已添加"高亮，就地切 class，不重建 DOM，避免滚动位置被重置
+        this.state.on(CHANNEL.STRUCTURE, () => this.updateHighlights());
+    }
+
+    /**
+     * 仅同步"已添加/已安装"视觉状态，不触碰列表结构。
+     */
+    updateHighlights() {
+        const selectedEntryIds = new Set(
+            this.state.selectedTiles.map((t) => t.ref_preset_id).filter(Boolean)
+        );
+        this.listViewport.querySelectorAll(".prompt-vault-tile[data-entry-id]").forEach((el) => {
+            el.classList.toggle("is-vault-selected", selectedEntryIds.has(el.dataset.entryId));
+        });
+
+        const installedGroupPresetIds = new Set();
+        this.state.selectedTiles.forEach((tile) => {
+            (tile.groups || []).forEach((membership) => {
+                if (membership.presetId) installedGroupPresetIds.add(membership.presetId);
+            });
+        });
+        this.listViewport.querySelectorAll(".prompt-vault-group-card").forEach((card) => {
+            card.classList.toggle("is-vault-selected", installedGroupPresetIds.has(card.dataset.groupId));
+        });
     }
 
     initDOM() {
@@ -385,6 +410,8 @@ export class LeftVaultComponent {
     }
 
     renderList() {
+        const prevScrollTop = this.listViewport.scrollTop;
+
         if (!this.isSearchActive) {
             this.refreshDropdownOptions();
         }
@@ -401,6 +428,8 @@ export class LeftVaultComponent {
         } else {
             this.renderGroupView(groups, entries, categories, tagsDict);
         }
+
+        this.listViewport.scrollTop = prevScrollTop;
     }
 
     renderSingleView(entries, groups, categories, tagsDict) {
@@ -542,9 +571,7 @@ export class LeftVaultComponent {
                 const isExpanded = this.expandedGroupIds.has(group.id);
                 const memberIds = Array.isArray(group.entryIds) ? group.entryIds : [];
 
-                const isWholeGroupAdded = Boolean(
-                    group.id && this.state.selectedTiles.some((t) => t.group_preset_id === group.id)
-                );
+                const isWholeGroupAdded = Boolean(group.id && this.state.isGroupInstalled(group.id));
 
                 const card = document.createElement("div");
                 card.className = "prompt-vault-group-card";
@@ -636,7 +663,9 @@ export class LeftVaultComponent {
                     if (e.target.closest(".prompt-vault-group-actions")) return;
                     if (e.target.closest(".prompt-vault-group-chevron")) return;
 
-                    if (isWholeGroupAdded) {
+                    // 以点击时刻的状态为准：structure 变化不再重建列表，闭包里的 isWholeGroupAdded 会过期
+                    const installed = this.state.isGroupInstalled(group.id);
+                    if (installed) {
                         this.state.removeGroupByPresetId(group.id);
                     } else {
                         this.state.addGroup(group, entries, categories);

@@ -301,6 +301,17 @@ export class PresetModalManager {
     }
 
     /**
+     * 解析本次打开生效的保存回调。
+     * 优先使用本次上下文传入的 onSaved，避免通过改写实例属性让后续打开复用旧闭包。
+     * @returns {((savedData?: any) => Promise<void>)|null}
+     */
+    resolveOnSaved() {
+        const scoped = this.modalContext && this.modalContext.onSaved;
+        if (typeof scoped === "function") return scoped;
+        return typeof this.onSaved === "function" ? this.onSaved : null;
+    }
+
+    /**
      * 提交普通词条的新建或修改（已有词条覆盖 / 新词条新建）。
      */
     async submitStandardForm() {
@@ -348,8 +359,9 @@ export class PresetModalManager {
         try {
             const result = await upsertEntry(payload, this.pendingImageFile);
             if (result && result.success) {
-                if (typeof this.onSaved === "function") {
-                    await this.onSaved(result.data);
+                const onSaved = this.resolveOnSaved();
+                if (onSaved) {
+                    await onSaved(result.data);
                 }
                 this.close();
             } else {
@@ -409,8 +421,9 @@ export class PresetModalManager {
         try {
             const result = await upsertEntry(payload, this.pendingImageFile);
             if (result && result.success) {
-                if (typeof this.onSaved === "function") {
-                    await this.onSaved(result.data);
+                const onSaved = this.resolveOnSaved();
+                if (onSaved) {
+                    await onSaved(result.data);
                 }
                 this.close();
             } else {
@@ -514,8 +527,9 @@ export class PresetModalManager {
                 });
             }
 
-            if (typeof this.onSaved === "function") {
-                await this.onSaved(savedEntry);
+            const onSaved = this.resolveOnSaved();
+            if (onSaved) {
+                await onSaved(savedEntry);
             }
             this.close();
         } catch (err) {

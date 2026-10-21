@@ -43,7 +43,13 @@ export class SaveGroupModalManager {
         const categoryOptions = buildCategoryHierarchyOptions(categories);
 
         const candidateGroupTitles = Array.from(
-            new Set(selectedTiles.map((t) => t.group_title).filter(Boolean))
+            new Set(
+                selectedTiles.flatMap((tile) =>
+                    (Array.isArray(tile.groups) ? tile.groups : [])
+                        .map((membership) => membership.title)
+                        .filter(Boolean)
+                )
+            )
         );
 
         let initialDefaultTitle = "";

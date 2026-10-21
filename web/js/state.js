@@ -2,9 +2,17 @@
 
 /**
  * 节点内部响应式状态机与脏状态追踪模块。
- * 管理当前节点已选磁贴实例、独立关系组合批量载入、
- * 严格基于 entry.id 的单源基准去脏比对与还原、
- * 运行态几何连线发光渲染分配、Shift 多选与批量拖拽排序、Widget 序列化双向绑定。
+ *
+ * 中栏磁贴 v2 数据模型：
+ * - 一个词条在中栏最多存在一个实例（按 ref_preset_id 去重），从根本上消除副本；
+ * - 组合归属不再用单值 group_id，而是 groups: [{ runtimeId, presetId, title, color }][0..n]，
+ *   因此同一磁贴可以同时服务于多个组合，后者只是在磁贴上追加归属；
+ * - pinned 记录"是否由用户直接加入"，卸载组合时采用引用计数：
+ *   先摘除归属，归属清空且非手动加入的磁贴才被回收。
+ *
+ * 聚焦采用懒变更策略：沿用上一次聚焦的组合；仅当它不存在时才回退到磁贴的 groups[0]。
+ *
+ * 通知按 library / structure / selection / content 四条通道分发，组件各取所需。
  */
 
 import { clampAndRoundWeight } from "./utils/prompt_format.js";
@@ -47,6 +55,14 @@ export function getRecentUsageMap() {
 const GROUP_PALETTE = ["#10b981", "#a855f7", "#06b6d4", "#f59e0b", "#ec4899"];
 
 /**
+ * 指针离开磁贴后的预览宽限期（毫秒）。
+ * 磁贴之间存在行间距，mouseleave 会先于下一行的 mouseenter 触发；
+ * 若立即回落就会出现"预览 → lastFocus → 新预览"的闪烁。
+ * 宽限期内进入下一个组磁贴会直接接管预览，不再经过 lastFocus。
+ */
+const HOVER_PREVIEW_GRACE_MS = 150;
+
+/**
  * 规范化文本内容，消除换行符及首尾多余空白引起的比较偏差。
  * @param {string} text
  * @returns {string}
@@ -56,15 +72,140 @@ function normalizeText(text) {
     return text.replace(/\r\n/g, "\n").trim();
 }
 
+/* =========================================================================
+   v2 磁贴模型辅助
+   ========================================================================= */
+
+/** 运行时实例 ID 自增序号，保证同一页面会话内不会重复 */
+let instanceSequence = 0;
+
 /**
- * 已选磁贴运行态实例类型定义
+ * 生成唯一运行时 ID。
+ * @param {string} prefix
+ * @returns {string}
+ */
+function nextInstanceId(prefix) {
+    instanceSequence += 1;
+    const salt = Math.random().toString(36).slice(2, 6);
+    return `${prefix}_${Date.now().toString(36)}_${instanceSequence}_${salt}`;
+}
+
+/**
+ * 规范化一个组合归属项。
+ * @param {{ runtimeId?: string, presetId?: string|null, title?: string, color?: string }} raw
+ */
+function createMembership(raw = {}) {
+    return {
+        runtimeId: raw.runtimeId,
+        presetId: raw.presetId || null,
+        title: raw.title || "组合模板",
+        color: raw.color || GROUP_PALETTE[0],
+    };
+}
+
+/**
+ * 取磁贴在指定运行时组合中的归属项。
+ * @param {any} tile
+ * @param {string|null} runtimeId
+ * @returns {{ runtimeId: string, presetId: string|null, title: string, color: string }|null}
+ */
+export function findMembership(tile, runtimeId) {
+    if (!tile || !runtimeId || !Array.isArray(tile.groups)) return null;
+    return tile.groups.find((g) => g.runtimeId === runtimeId) || null;
+}
+
+/**
+ * 把历史 v1 磁贴（单 group_id）升级为 v2（groups + pinned），并兜底修复残缺字段。
+ * @param {any} raw
+ * @returns {any}
+ */
+export function normalizeTileInstance(raw) {
+    const tile = { ...raw };
+
+    if (!Array.isArray(tile.groups)) {
+        if (tile.group_id) {
+            tile.groups = [
+                createMembership({
+                    runtimeId: tile.group_id,
+                    presetId: tile.group_preset_id,
+                    title: tile.group_title,
+                    color: tile.group_color,
+                }),
+            ];
+            // v1 无法区分"手动加入"与"由组合创建"，有归属的一律按组合创建处理
+            tile.pinned = false;
+        } else {
+            tile.groups = [];
+            tile.pinned = true;
+        }
+    } else {
+        tile.groups = tile.groups.filter((g) => g && g.runtimeId).map((g) => createMembership(g));
+        if (typeof tile.pinned !== "boolean") {
+            tile.pinned = tile.groups.length === 0;
+        }
+    }
+
+    if (typeof tile.pinned !== "boolean") {
+        tile.pinned = tile.groups.length === 0;
+    }
+    if (!tile.instance_id) {
+        tile.instance_id = nextInstanceId("tile");
+    }
+
+    // 清理 v1 遗留字段，避免它们随工作流继续序列化
+    delete tile.group_id;
+    delete tile.group_preset_id;
+    delete tile.group_title;
+    delete tile.group_color;
+
+    return tile;
+}
+
+/**
+ * 按 ref_preset_id 去重，保留首个出现项；空白草稿（ref 为空）不受限制。
+ * @param {any[]} tiles
+ * @returns {any[]}
+ */
+export function dedupeTilesByRef(tiles) {
+    const seen = new Set();
+    let dropped = 0;
+    const result = tiles.filter((tile) => {
+        const refId = tile && tile.ref_preset_id;
+        if (!refId) return true;
+        if (seen.has(refId)) {
+            dropped += 1;
+            return false;
+        }
+        seen.add(refId);
+        return true;
+    });
+    if (dropped > 0) {
+        console.info(`[PromptVault] 已丢弃 ${dropped} 个重复磁贴：同一词条在中栏只保留一个实例`);
+    }
+    return result;
+}
+
+/**
+ * 状态变更通道。各组件只订阅自己关心的通道，避免无关重渲染。
+ * - LIBRARY:   词库数据被外部改变（CRUD / 导入 / 其它节点广播）
+ * - STRUCTURE: 磁贴集合、顺序、组归属发生变化
+ * - SELECTION: 激活磁贴或中栏多选集发生变化
+ * - CONTENT:   单个磁贴自身字段变化（标题/正文/分类/权重/静音/脏标记/缩略图）
+ */
+export const CHANNEL = {
+    LIBRARY: "library",
+    STRUCTURE: "structure",
+    SELECTION: "selection",
+    CONTENT: "content",
+};
+
+/**
+ * 已选磁贴运行态实例类型定义（v2）
  * @typedef {Object} SelectedTileInstance
  * @property {string} instance_id - 运行时唯一标识
- * @property {string|null} ref_preset_id - 关联的纯净词条 entry.id (无论单选还是成组，均严格指向自身实体)
- * @property {string|null} group_id - 所属动态组合的运行时唯一标识 (用于中栏发光连线)
- * @property {string|null} group_preset_id - 所属词库 group 的持久化 ID (若该组合已入库)
- * @property {string|null} group_title - 所属动态组合的名称
- * @property {string|null} group_color - 所属组合分配的主题微光颜色
+ * @property {string|null} ref_preset_id - 关联的纯净词条 entry.id
+ * @property {{ runtimeId: string, presetId: string|null, title: string, color: string }[]} groups - 组合归属（0..n）
+ * @property {boolean} pinned - 是否由用户直接加入（卸载组合时保留为独立磁贴）
  * @property {string} title - 磁贴名称
  * @property {string} prompt - 提示词内容
  * @property {string|null} category_id - 分类 ID
@@ -87,31 +228,106 @@ export class VaultNodeState {
         this.activeInstanceId = null;
         /** @type {Set<string>} 中栏多选磁贴实例 ID 集合 */
         this.multiSelectedIds = new Set();
-        /** @type {string|null} 鼠标悬停临时预览连线的组合 ID */
-        this.hoveredGroupId = null;
-        /** @type {Set<Function>} 基础数据状态变更订阅者回调集合 */
-        this.subscribers = new Set();
-        /** @type {Set<Function>} 轻量悬浮预览状态专用订阅者回调集合 */
-        this.hoverSubscribers = new Set();
+        /** @type {string|null} 上一次聚焦的运行时组合 ID（持久保留，不因移出悬停而清空） */
+        this.lastFocusGroupId = null;
+        /** @type {boolean} 指针当前是否停在中栏磁贴上（悬停预览是否生效） */
+        this.hoverPreviewActive = false;
+        /** @type {string|null} 悬停预览的组合 ID；null 表示指针所在磁贴没有可展示的组合 */
+        this.hoverPreviewGroupId = null;
+        /** @type {ReturnType<typeof setTimeout>|null} 预览消散的宽限定时器 */
+        this._hoverEndTimer = null;
+        /** @type {Map<string, Set<Function>>} 按通道分组的订阅者回调集合 */
+        this.subscribers = new Map();
+        /** @type {Set<Function>} 聚焦变化专用订阅者回调集合（仅用于轻量重绘轨道） */
+        this.focusSubscribers = new Set();
     }
 
-    subscribe(callback) {
-        this.subscribers.add(callback);
-        return () => this.subscribers.delete(callback);
+    /**
+     * 订阅指定通道。
+     * @param {string} channel - CHANNEL 之一
+     * @param {(detail?: any) => void} callback
+     * @returns {() => void} 取消订阅
+     */
+    on(channel, callback) {
+        let bucket = this.subscribers.get(channel);
+        if (!bucket) {
+            bucket = new Set();
+            this.subscribers.set(channel, bucket);
+        }
+        bucket.add(callback);
+        return () => bucket.delete(callback);
     }
 
-    subscribeHover(callback) {
-        this.hoverSubscribers.add(callback);
-        return () => this.hoverSubscribers.delete(callback);
+    /**
+     * 订阅聚焦变化。轨道重绘只依赖这一个信号，避免整表重渲染。
+     * @param {(displayGroupId: string|null) => void} callback
+     * @returns {() => void} 取消订阅
+     */
+    subscribeFocus(callback) {
+        this.focusSubscribers.add(callback);
+        return () => this.focusSubscribers.delete(callback);
     }
 
-    notify() {
-        this.syncToNodeWidget();
-        this.subscribers.forEach((cb) => {
+    _notifyFocus() {
+        const displayId = this.getDisplayFocusGroupId();
+        this.focusSubscribers.forEach((cb) => {
             try {
-                cb(this);
+                cb(displayId);
             } catch (err) {
-                console.error("[PromptVault] Error in subscriber callback:", err);
+                console.error("[PromptVault] Error in focus subscriber callback:", err);
+            }
+        });
+    }
+
+    /**
+     * 当前应当展示连线的组合：悬停预览优先；指针离开后回落到上一次聚焦。
+     * @returns {string|null}
+     */
+    getDisplayFocusGroupId() {
+        return this.hoverPreviewActive ? this.hoverPreviewGroupId : this.lastFocusGroupId;
+    }
+
+    /**
+     * 可作为"连线带"绘制出来的聚焦组。
+     * 连线是两点之间的连接，成员数不足 2 时画不出完整的带，
+     * 强行绘制只会留下悬空的残缺线段，因此返回 null（等同于不展示）。
+     * @returns {string|null}
+     */
+    getRenderableFocusGroupId() {
+        const displayId = this.getDisplayFocusGroupId();
+        if (!displayId) return null;
+
+        let memberCount = 0;
+        this.selectedTiles.forEach((tile) => {
+            if (findMembership(tile, displayId)) {
+                memberCount += 1;
+            }
+        });
+
+        return memberCount >= 2 ? displayId : null;
+    }
+
+    /**
+     * 向指定通道广播状态变更。
+     * @param {string} [channel=CHANNEL.STRUCTURE] - CHANNEL 之一
+     * @param {any} [detail=null] - 附加信息（如 { instanceId }）
+     */
+    notify(channel = CHANNEL.STRUCTURE, detail = null) {
+        // 仅结构性变化才需要回写隐藏 widget 并刷新画布，避免每次输入都全量序列化
+        if (channel === CHANNEL.STRUCTURE) {
+            this.syncToNodeWidget();
+            // 结构变化会重建行，旧的悬停预览与待消散的定时器一并作废
+            this._cancelHoverEnd();
+            this.hoverPreviewActive = false;
+            this.hoverPreviewGroupId = null;
+        }
+        const bucket = this.subscribers.get(channel);
+        if (!bucket) return;
+        bucket.forEach((cb) => {
+            try {
+                cb(detail);
+            } catch (err) {
+                console.error(`[PromptVault] Error in "${channel}" subscriber:`, err);
             }
         });
     }
@@ -122,7 +338,9 @@ export class VaultNodeState {
                 this.selectedTiles = [];
             } else {
                 const parsed = JSON.parse(jsonString);
-                this.selectedTiles = Array.isArray(parsed) ? parsed : [];
+                const rawTiles = Array.isArray(parsed) ? parsed : [];
+                // 先迁移 v1 形状，再按词条去重，最后定位激活项
+                this.selectedTiles = dedupeTilesByRef(rawTiles.map(normalizeTileInstance));
             }
         } catch (err) {
             console.warn("[PromptVault] Failed to parse serialized tiles:", err);
@@ -133,7 +351,11 @@ export class VaultNodeState {
             this.activeInstanceId = this.selectedTiles[0].instance_id;
         }
         this.multiSelectedIds.clear();
-        this.notify();
+        this.lastFocusGroupId = null;
+        this.hoverPreviewActive = false;
+        this.hoverPreviewGroupId = null;
+        this._ensureFocus();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     syncToNodeWidget() {
@@ -159,7 +381,120 @@ export class VaultNodeState {
         if (this.activeInstanceId !== instanceId) {
             this.activeInstanceId = instanceId;
         }
-        this.notify();
+        // 懒聚焦：上一次聚焦的组仍然有效就不改动，仅在缺失时回退到 groups[0]
+        this._ensureFocus();
+        this.notify(CHANNEL.SELECTION);
+    }
+
+    /**
+     * 懒变更聚焦规则（悬停切换与选中共用）：
+     * 新磁贴仍包含"上一次聚焦"的组 → 保持；不包含 → 取该磁贴的首个归属组（无归属则无聚焦）。
+     * @param {any} tile
+     * @returns {string|null}
+     */
+    _resolveFocusFor(tile) {
+        const memberships = tile && Array.isArray(tile.groups) ? tile.groups : [];
+        if (this.lastFocusGroupId && memberships.some((g) => g.runtimeId === this.lastFocusGroupId)) {
+            return this.lastFocusGroupId;
+        }
+        return memberships.length > 0 ? memberships[0].runtimeId : null;
+    }
+
+    /**
+     * 判断某个运行时组合是否属于"当前选中磁贴"。
+     * 持久聚焦只能落在这个集合内，否则会指向与选中项无关的组。
+     * @param {string|null} runtimeId
+     * @returns {boolean}
+     */
+    _isInActiveTile(runtimeId) {
+        if (!runtimeId) return false;
+        const activeTile = this.getActiveTile();
+        return Boolean(
+            activeTile &&
+                Array.isArray(activeTile.groups) &&
+                activeTile.groups.some((g) => g.runtimeId === runtimeId)
+        );
+    }
+
+    /**
+     * 指针进入磁贴：建立临时预览。
+     * 预览本身沿用懒变更规则；但写入持久聚焦有额外约束 ——
+     * 只有落在当前选中磁贴归属集合内的组才会被记住。
+     * 因此选中 A 时悬停其它组只预览；选中 AB 时悬停 A/B 组可切换并停留，
+     * 悬停 C 组只预览，移开后回落到 A/B。
+     * 悬停无归属磁贴（白板）时不改变任何状态，展示维持原样。
+     * @param {any} tile
+     */
+    beginHoverPreview(tile) {
+        const memberships = tile && Array.isArray(tile.groups) ? tile.groups : [];
+        if (memberships.length === 0) return;
+
+        // 从上一行直接进入本行时，取消待消散的预览，避免中间插一帧 lastFocus
+        this._cancelHoverEnd();
+
+        const previousDisplay = this.getDisplayFocusGroupId();
+        const previewId = this._resolveFocusFor(tile);
+
+        this.hoverPreviewActive = true;
+        this.hoverPreviewGroupId = previewId;
+
+        if (this._isInActiveTile(previewId)) {
+            this.lastFocusGroupId = previewId;
+        }
+
+        if (this.getDisplayFocusGroupId() !== previousDisplay) {
+            this._notifyFocus();
+        }
+    }
+
+    /**
+     * 指针离开磁贴：进入宽限期，延迟回落；期间进入其它组磁贴则被取消。
+     */
+    endHoverPreview() {
+        if (!this.hoverPreviewActive || this._hoverEndTimer) return;
+        this._hoverEndTimer = setTimeout(() => {
+            this._hoverEndTimer = null;
+            this._finishHoverPreview();
+        }, HOVER_PREVIEW_GRACE_MS);
+    }
+
+    /**
+     * 宽限期结束后真正结束预览，回落到上一次聚焦。
+     */
+    _finishHoverPreview() {
+        if (!this.hoverPreviewActive) return;
+        const previousDisplay = this.getDisplayFocusGroupId();
+        this.hoverPreviewActive = false;
+        this.hoverPreviewGroupId = null;
+        if (this.getDisplayFocusGroupId() !== previousDisplay) {
+            this._notifyFocus();
+        }
+    }
+
+    _cancelHoverEnd() {
+        if (this._hoverEndTimer) {
+            clearTimeout(this._hoverEndTimer);
+            this._hoverEndTimer = null;
+        }
+    }
+
+    /**
+     * 选中变化后收敛聚焦（选中通道随后会触发轨道重绘，故此处不发通知）。
+     */
+    _ensureFocus() {
+        this.lastFocusGroupId = this._resolveFocusFor(this.getActiveTile());
+    }
+
+    /**
+     * 判断某个词库组合是否已安装到中栏（存在任意一个归属即可）。
+     * @param {string} groupPresetId
+     * @returns {boolean}
+     */
+    isGroupInstalled(groupPresetId) {
+        if (!groupPresetId) return false;
+        return this.selectedTiles.some(
+            (tile) => Array.isArray(tile.groups) && tile.groups.some((g) => g.presetId === groupPresetId)
+        );
     }
 
     toggleMultiSelect(instanceId) {
@@ -175,13 +510,13 @@ export class VaultNodeState {
                 this.multiSelectedIds.add(instanceId);
             }
         }
-        this.notify();
+        this.notify(CHANNEL.SELECTION);
     }
 
     clearMultiSelect() {
         if (this.multiSelectedIds.size > 0) {
             this.multiSelectedIds.clear();
-            this.notify();
+            this.notify(CHANNEL.SELECTION);
         }
     }
 
@@ -193,113 +528,148 @@ export class VaultNodeState {
         return this.selectedTiles.filter((t) => this.multiSelectedIds.has(t.instance_id));
     }
 
-    setHoveredGroupId(groupId) {
-        if (this.hoveredGroupId !== groupId) {
-            this.hoveredGroupId = groupId;
-            this.hoverSubscribers.forEach((cb) => {
-                try {
-                    cb(this.hoveredGroupId);
-                } catch (err) {
-                    console.error("[PromptVault] Error in hover subscriber callback:", err);
-                }
-            });
-        }
+    /**
+     * 以词条为模板创建中栏磁贴实例。
+     * @param {any} entry
+     * @param {any[]} categories
+     * @param {Partial<SelectedTileInstance>} [overrides]
+     * @returns {SelectedTileInstance}
+     */
+    _createTileInstance(entry, categories = [], overrides = {}) {
+        const matchedCat = (categories || []).find((c) => c.id === entry.categoryId);
+        return {
+            instance_id: nextInstanceId("tile"),
+            ref_preset_id: entry.id || null,
+            groups: [],
+            pinned: false,
+            title: entry.title || "未命名词条",
+            prompt: entry.text || entry.prompt || "",
+            category_id: entry.categoryId || null,
+            category: matchedCat ? matchedCat.name : "未分类",
+            weight: 1.0,
+            enabled: true,
+            is_dirty: false,
+            thumbnail: entry.previewHash || entry.thumbnail || "",
+            ...overrides,
+        };
+    }
+
+    /**
+     * 为新的运行时组合分配一个调色板颜色。
+     * @returns {string}
+     */
+    _nextGroupColor() {
+        const used = new Set();
+        this.selectedTiles.forEach((tile) => {
+            (tile.groups || []).forEach((g) => used.add(g.runtimeId));
+        });
+        return GROUP_PALETTE[used.size % GROUP_PALETTE.length];
     }
 
     /**
      * 从词库单条 entry 实例化并加入已选列表。
+     * 同一词条只允许一个实例，已存在时直接复用。
      * @param {any} entry
      * @param {any[]} categories
      * @returns {SelectedTileInstance}
      */
     addTileFromEntry(entry, categories = []) {
-        if (entry && entry.id) {
+        if (!entry) return null;
+
+        if (entry.id) {
+            const existing = this.selectedTiles.find((t) => t.ref_preset_id === entry.id);
+            if (existing) {
+                this.activeInstanceId = existing.instance_id;
+                this._ensureFocus();
+                this.notify(CHANNEL.SELECTION);
+                return existing;
+            }
             recordRecentUsage(entry.id);
         }
 
-        const matchedCat = categories.find((c) => c.id === entry.categoryId);
-        const catName = matchedCat ? matchedCat.name : "未分类";
-
-        const newInstance = {
-            instance_id: `tile_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            ref_preset_id: entry.id || null,
-            group_id: null,
-            group_preset_id: null,
-            group_title: null,
-            group_color: null,
-            title: entry.title || "未命名词条",
-            prompt: entry.text || entry.prompt || "",
-            category_id: entry.categoryId || null,
-            category: catName,
-            weight: 1.0,
-            enabled: true,
-            is_dirty: false,
-            thumbnail: entry.previewHash || entry.thumbnail || "",
-        };
+        const newInstance = this._createTileInstance(entry, categories, { pinned: true });
 
         this.selectedTiles.push(newInstance);
         this.activeInstanceId = newInstance.instance_id;
         this.multiSelectedIds.clear();
-        this.notify();
+        this.lastFocusGroupId = null;
+        this._ensureFocus();
+        this.notify(CHANNEL.STRUCTURE);
         return newInstance;
     }
 
     /**
-     * 从词库 group 关系实体批量解析出对应 entries 并作为组合加入中栏。
-     * 关键架构约定：每个组员的 ref_preset_id 均严格指向其自身的 entry.id，从根本上杜绝张冠李戴。
+     * 以"补齐"方式安装一个组合：只创建缺失的词条，已存在的磁贴仅追加组合归属。
+     * 组合是关系实体，安装只是在磁贴上登记归属；卸载时按引用计数回收。
      * @param {any} group - 组合关系对象 (包含 entryIds)
      * @param {any[]} allEntries - 全量词库 entries 数组
      * @param {any[]} categories - 全量分类数组
-     * @returns {SelectedTileInstance[]}
+     * @returns {{ added: number, adopted: number, skipped: number }}
      */
     addGroup(group, allEntries = [], categories = []) {
-        const entryIds = Array.isArray(group.entryIds) ? group.entryIds : [];
-        if (entryIds.length === 0) return [];
+        const entryIds = Array.isArray(group.entryIds) ? group.entryIds.filter(Boolean) : [];
+        if (entryIds.length === 0) return { added: 0, adopted: 0, skipped: 0 };
 
         if (group && group.id) {
             recordRecentUsage(group.id);
         }
 
-        const newGroupId = `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-        const existingGroupIds = new Set(this.selectedTiles.map((t) => t.group_id).filter(Boolean));
-        const colorIndex = existingGroupIds.size % GROUP_PALETTE.length;
-        const assignedColor = GROUP_PALETTE[colorIndex];
-
-        const createdInstances = [];
-
-        entryIds.forEach((eid, idx) => {
-            recordRecentUsage(eid);
-            const entry = allEntries.find((e) => e.id === eid);
-            if (!entry) return;
-
-            const matchedCat = categories.find((c) => c.id === entry.categoryId);
-            const catName = matchedCat ? matchedCat.name : "未分类";
-
-            createdInstances.push({
-                instance_id: `tile_grp_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 6)}`,
-                ref_preset_id: entry.id, // 核心保证：严格为自身的真实 entry.id
-                group_id: newGroupId,
-                group_preset_id: group.id || null,
-                group_title: group.title || "组合模板",
-                group_color: assignedColor,
-                title: entry.title || `组员 #${idx + 1}`,
-                prompt: entry.text || entry.prompt || "",
-                category_id: entry.categoryId || null,
-                category: catName,
-                weight: 1.0,
-                enabled: true,
-                is_dirty: false,
-                thumbnail: entry.previewHash || entry.thumbnail || "",
-            });
+        const membership = createMembership({
+            runtimeId: nextInstanceId("grp"),
+            presetId: group.id || null,
+            title: group.title,
+            color: this._nextGroupColor(),
         });
 
-        if (createdInstances.length === 0) return [];
+        const created = [];
+        let adopted = 0;
+        let skipped = 0;
 
-        this.selectedTiles.push(...createdInstances);
-        this.activeInstanceId = createdInstances[0].instance_id;
-        this.multiSelectedIds.clear();
-        this.notify();
-        return createdInstances;
+        entryIds.forEach((entryId) => {
+            recordRecentUsage(entryId);
+
+            const existing = this.selectedTiles.find((t) => t.ref_preset_id === entryId);
+            if (existing) {
+                if (!existing.groups.some((g) => g.runtimeId === membership.runtimeId)) {
+                    existing.groups.push({ ...membership });
+                    adopted += 1;
+                }
+                return;
+            }
+
+            const entry = allEntries.find((e) => e.id === entryId);
+            if (!entry) {
+                skipped += 1;
+                return;
+            }
+
+            created.push(
+                this._createTileInstance(entry, categories, {
+                    groups: [{ ...membership }],
+                    pinned: false,
+                })
+            );
+        });
+
+        if (created.length > 0) {
+            this.selectedTiles.push(...created);
+            this.activeInstanceId = created[0].instance_id;
+        }
+        if (created.length > 0 || adopted > 0) {
+            this.multiSelectedIds.clear();
+            // 优先聚焦刚安装的组；若选中磁贴并不属于它，则回退到选中磁贴自己的归属
+            this.lastFocusGroupId = membership.runtimeId;
+            this._ensureFocus();
+            this.notify(CHANNEL.STRUCTURE);
+        }
+
+        if (skipped > 0) {
+            console.warn(
+                `[PromptVault] 组合「${group.title || "未命名组合"}」有 ${skipped} 个词条在词库中不存在，已跳过`
+            );
+        }
+
+        return { added: created.length, adopted, skipped };
     }
 
     /**
@@ -307,35 +677,25 @@ export class VaultNodeState {
      * @returns {SelectedTileInstance}
      */
     addEmptyTile() {
-        const emptyInstance = {
-            instance_id: `tile_draft_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            ref_preset_id: null,
-            group_id: null,
-            group_preset_id: null,
-            group_title: null,
-            group_color: null,
-            title: "临时空白词条",
-            prompt: "",
-            category_id: null,
-            category: "未分类",
-            weight: 1.0,
-            enabled: true,
-            is_dirty: true,
-            thumbnail: "",
-        };
+        const emptyInstance = this._createTileInstance(
+            { id: null, title: "临时空白词条", text: "", categoryId: null },
+            [],
+            { pinned: true, is_dirty: true }
+        );
 
         this.selectedTiles.push(emptyInstance);
         this.activeInstanceId = emptyInstance.instance_id;
         this.multiSelectedIds.clear();
-        this.notify();
+        this.lastFocusGroupId = null;
+        this.notify(CHANNEL.STRUCTURE);
         return emptyInstance;
     }
 
     /**
-     * 将中栏已有的一组磁贴就地绑定为动态组合。
-     * 不篡改每个磁贴自身的 ref_preset_id。
+     * 将中栏已有的一组磁贴就地登记为动态组合（追加归属，不覆盖已有归属）。
+     * 不篡改每个磁贴自身的 ref_preset_id 与内容。
      * @param {string[]} instanceIds
-     * @param {string} groupId
+     * @param {string} groupId - 运行时组合 ID
      * @param {string} groupTitle
      * @param {string|null} [assignedColor=null]
      * @param {string|null} [groupPresetId=null]
@@ -343,120 +703,140 @@ export class VaultNodeState {
     bindTilesToGroup(instanceIds, groupId, groupTitle, assignedColor = null, groupPresetId = null) {
         if (!instanceIds || instanceIds.length === 0) return;
 
-        let finalColor = assignedColor;
-        if (!finalColor) {
-            const existingGroupIds = new Set(this.selectedTiles.map((t) => t.group_id).filter(Boolean));
-            const colorIndex = existingGroupIds.size % GROUP_PALETTE.length;
-            finalColor = GROUP_PALETTE[colorIndex];
-        }
+        const membership = createMembership({
+            runtimeId: groupId,
+            presetId: groupPresetId,
+            title: groupTitle,
+            color: assignedColor || this._nextGroupColor(),
+        });
 
         const idSet = new Set(instanceIds);
         this.selectedTiles.forEach((tile) => {
-            if (idSet.has(tile.instance_id)) {
-                tile.group_id = groupId;
-                tile.group_title = groupTitle;
-                tile.group_color = finalColor;
-                if (groupPresetId) {
-                    tile.group_preset_id = groupPresetId;
-                }
-            }
+            if (!idSet.has(tile.instance_id)) return;
+            if (!Array.isArray(tile.groups)) tile.groups = [];
+            if (tile.groups.some((g) => g.runtimeId === membership.runtimeId)) return;
+            tile.groups.push({ ...membership });
         });
 
+        this.lastFocusGroupId = membership.runtimeId;
+        this._ensureFocus();
         this.multiSelectedIds.clear();
-        this.notify();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
+    /**
+     * 移除单个磁贴。
+     * 不再连带移除其所属组合：其余组员保留，该组合在中栏退化为"部分已加入"状态。
+     * 整组卸载请使用 removeGroupById / removeGroupByPresetId（左栏组合卡片入口）。
+     * @param {string} instanceId
+     */
     removeTile(instanceId) {
-        const target = this.selectedTiles.find((t) => t.instance_id === instanceId);
-        if (!target) return;
+        const index = this.selectedTiles.findIndex((t) => t.instance_id === instanceId);
+        if (index === -1) return;
 
-        if (target.group_id) {
-            this.removeGroupById(target.group_id);
-            return;
-        }
-
-        const index = this.selectedTiles.indexOf(target);
         this.selectedTiles.splice(index, 1);
         this.multiSelectedIds.delete(instanceId);
 
         if (this.activeInstanceId === instanceId) {
             this.activeInstanceId = this.selectedTiles[0] ? this.selectedTiles[0].instance_id : null;
         }
-        this.notify();
-    }
-
-    removeGroupById(groupId) {
-        if (!groupId) return;
-
-        const removingIds = new Set(
-            this.selectedTiles.filter((t) => t.group_id === groupId).map((t) => t.instance_id)
-        );
-
-        this.selectedTiles = this.selectedTiles.filter((t) => t.group_id !== groupId);
-
-        removingIds.forEach((id) => this.multiSelectedIds.delete(id));
-
-        if (removingIds.has(this.activeInstanceId)) {
-            this.activeInstanceId = this.selectedTiles[0] ? this.selectedTiles[0].instance_id : null;
-        }
-        this.notify();
+        this._ensureFocus();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     /**
-     * 根据持久化组合 group.id 整组移除中栏磁贴。
+     * 卸载一个运行时组合（按 runtimeId）。
+     * @param {string} runtimeId
+     * @returns {boolean} 是否发生了变更
+     */
+    removeGroupById(runtimeId) {
+        if (!runtimeId) return false;
+        return this._uninstallGroups((membership) => membership.runtimeId === runtimeId);
+    }
+
+    /**
+     * 卸载某个词库组合在中栏的全部安装实例（按 group.id）。
      * @param {string} groupPresetId
+     * @returns {boolean}
      */
     removeGroupByPresetId(groupPresetId) {
-        if (!groupPresetId) return;
+        if (!groupPresetId) return false;
+        return this._uninstallGroups((membership) => membership.presetId === groupPresetId);
+    }
 
-        const matchingTiles = this.selectedTiles.filter((t) => t.group_preset_id === groupPresetId);
-        if (matchingTiles.length === 0) return;
+    /**
+     * 按谓词摘除组合归属，并按引用计数回收磁贴：
+     * 归属清空后，pinned（用户手动加入）的磁贴保留为独立词条，其余一并移除。
+     * @param {(membership: any) => boolean} shouldRemove
+     * @returns {boolean}
+     */
+    _uninstallGroups(shouldRemove) {
+        const removedInstanceIds = new Set();
+        let changed = false;
 
-        const groupIds = new Set(matchingTiles.map((t) => t.group_id).filter(Boolean));
-        if (groupIds.size > 0) {
-            groupIds.forEach((gid) => this.removeGroupById(gid));
-        } else {
-            const removingIds = new Set(matchingTiles.map((t) => t.instance_id));
-            this.selectedTiles = this.selectedTiles.filter((t) => t.group_preset_id !== groupPresetId);
-            removingIds.forEach((id) => this.multiSelectedIds.delete(id));
-            if (removingIds.has(this.activeInstanceId)) {
-                this.activeInstanceId = this.selectedTiles[0] ? this.selectedTiles[0].instance_id : null;
+        this.selectedTiles = this.selectedTiles.filter((tile) => {
+            if (!Array.isArray(tile.groups) || tile.groups.length === 0) return true;
+
+            const kept = [];
+            tile.groups.forEach((membership) => {
+                if (shouldRemove(membership)) {
+                    changed = true;
+                } else {
+                    kept.push(membership);
+                }
+            });
+            if (kept.length === tile.groups.length) return true;
+
+            tile.groups = kept;
+            if (kept.length === 0 && !tile.pinned) {
+                removedInstanceIds.add(tile.instance_id);
+                return false;
             }
-            this.notify();
+            return true;
+        });
+
+        if (!changed) return false;
+
+        removedInstanceIds.forEach((id) => this.multiSelectedIds.delete(id));
+
+        if (
+            removedInstanceIds.has(this.activeInstanceId) ||
+            !this.selectedTiles.some((t) => t.instance_id === this.activeInstanceId)
+        ) {
+            this.activeInstanceId = this.selectedTiles[0] ? this.selectedTiles[0].instance_id : null;
         }
+
+        this._ensureFocus();
+        this.notify(CHANNEL.STRUCTURE);
+        return true;
     }
 
     removeMultiSelectedTiles() {
         if (this.multiSelectedIds.size === 0) return;
 
-        const removedGroupIds = new Set();
-        this.selectedTiles.forEach((t) => {
-            if (this.multiSelectedIds.has(t.instance_id) && t.group_id) {
-                removedGroupIds.add(t.group_id);
-            }
-        });
+        const selectedIds = new Set(this.multiSelectedIds);
+        this.selectedTiles = this.selectedTiles.filter((t) => !selectedIds.has(t.instance_id));
 
-        this.selectedTiles = this.selectedTiles.filter((t) => {
-            if (t.group_id && removedGroupIds.has(t.group_id)) {
-                return false;
-            }
-            return !this.multiSelectedIds.has(t.instance_id);
-        });
-
-        if (this.multiSelectedIds.has(this.activeInstanceId) || !this.selectedTiles.some((t) => t.instance_id === this.activeInstanceId)) {
+        if (
+            selectedIds.has(this.activeInstanceId) ||
+            !this.selectedTiles.some((t) => t.instance_id === this.activeInstanceId)
+        ) {
             this.activeInstanceId = this.selectedTiles[0] ? this.selectedTiles[0].instance_id : null;
         }
 
         this.multiSelectedIds.clear();
-        this.notify();
+        this._ensureFocus();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     clearAllTiles() {
         this.selectedTiles = [];
         this.activeInstanceId = null;
         this.multiSelectedIds.clear();
-        this.hoveredGroupId = null;
-        this.notify();
+        this.lastFocusGroupId = null;
+        this.hoverPreviewActive = false;
+        this.hoverPreviewGroupId = null;
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     reorderTiles(fromIndex, toIndex) {
@@ -472,7 +852,7 @@ export class VaultNodeState {
 
         const [movedItem] = this.selectedTiles.splice(fromIndex, 1);
         this.selectedTiles.splice(toIndex, 0, movedItem);
-        this.notify();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     reorderTilesBatch(movingIds, targetInstanceId, position = "before") {
@@ -491,7 +871,7 @@ export class VaultNodeState {
         remainingTiles.splice(insertIndex, 0, ...movingItems);
 
         this.selectedTiles = remainingTiles;
-        this.notify();
+        this.notify(CHANNEL.STRUCTURE);
     }
 
     adjustTileWeight(instanceId, delta) {
@@ -500,7 +880,7 @@ export class VaultNodeState {
 
         const current = typeof tile.weight === "number" ? tile.weight : 1.0;
         tile.weight = clampAndRoundWeight(current + delta);
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 
     toggleTileEnabled(instanceId) {
@@ -508,7 +888,7 @@ export class VaultNodeState {
         if (!tile) return;
 
         tile.enabled = !tile.enabled;
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 
     /**
@@ -565,7 +945,7 @@ export class VaultNodeState {
             return;
         }
 
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 
     markTileAsSavedToPreset(instanceId, savedEntry, categories = []) {
@@ -582,7 +962,7 @@ export class VaultNodeState {
         tile.category = catName;
         tile.thumbnail = savedEntry.previewHash || tile.thumbnail;
         tile.is_dirty = false;
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 
     /**
@@ -597,7 +977,7 @@ export class VaultNodeState {
         if (data.prompt !== undefined) tile.prompt = data.prompt;
         if (data.ref_preset_id !== undefined) tile.ref_preset_id = data.ref_preset_id;
         tile.is_dirty = false;
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 
     /**
@@ -622,6 +1002,6 @@ export class VaultNodeState {
         tile.category = matchedCat ? matchedCat.name : "未分类";
         tile.thumbnail = original.previewHash || "";
         tile.is_dirty = false;
-        this.notify();
+        this.notify(CHANNEL.CONTENT, { instanceId });
     }
 }

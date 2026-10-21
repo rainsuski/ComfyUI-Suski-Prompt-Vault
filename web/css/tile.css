@@ -188,6 +188,12 @@
     object-fit: cover;
 }
 
+.prompt-vault-tile-thumb .pv-thumb-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .prompt-vault-tile-info {
     flex: 1 1 0;
     min-width: 0;

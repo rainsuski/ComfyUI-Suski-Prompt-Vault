@@ -22,7 +22,7 @@ import {
     TileDeleteConfirmModal,
 } from "./js/components/modal.js";
 import { RightEditorComponent } from "./js/components/right_editor.js";
-import { VaultNodeState } from "./js/state.js";
+import { CHANNEL, VaultNodeState } from "./js/state.js";
 import { isolateCanvasEvents } from "./js/utils/events.js";
 
 /** 目标节点名称标识 */
@@ -75,7 +75,7 @@ async function refreshGlobalData() {
 async function notifyAllNodesRefresh() {
     await refreshGlobalData();
     for (const state of activeNodeStates) {
-        state.notify();
+        state.notify(CHANNEL.LIBRARY);
     }
 }
 
@@ -215,6 +215,35 @@ app.registerExtension({
                 notifyRefresh
             );
 
+            /**
+             * 把中栏磁贴转换为预设弹窗入参。
+             * v2 起磁贴可同时归属多个组合，此处只取首个归属作为编辑上下文。
+             * @param {any} tileDraft
+             */
+            const buildTileEditorArgs = (tileDraft) => {
+                const memberships = Array.isArray(tileDraft.groups) ? tileDraft.groups : [];
+                const primary = memberships[0] || null;
+                return {
+                    data: {
+                        id: tileDraft.ref_preset_id || undefined,
+                        ref_preset_id: tileDraft.ref_preset_id || undefined,
+                        group_id: primary ? primary.runtimeId : undefined,
+                        group_preset_id: primary ? primary.presetId : undefined,
+                        instance_id: tileDraft.instance_id,
+                        title: tileDraft.title,
+                        text: tileDraft.prompt,
+                        categoryId: tileDraft.category_id,
+                        previewHash: tileDraft.thumbnail,
+                    },
+                    context: {
+                        isGroupMember: Boolean(primary),
+                        groupPresetId: primary ? primary.presetId : null,
+                        instanceId: tileDraft.instance_id,
+                        state,
+                    },
+                };
+            };
+
             const importInput = document.createElement("input");
             importInput.type = "file";
             importInput.accept = ".json";
@@ -260,25 +289,8 @@ app.registerExtension({
                 () => globalLibrary,
                 (tileDraft) => {
                     if (!tileDraft) return;
-                    presetModalManager.open(
-                        {
-                            id: tileDraft.ref_preset_id || undefined,
-                            ref_preset_id: tileDraft.ref_preset_id || undefined,
-                            group_id: tileDraft.group_id || undefined,
-                            group_preset_id: tileDraft.group_preset_id || undefined,
-                            instance_id: tileDraft.instance_id,
-                            title: tileDraft.title,
-                            text: tileDraft.prompt,
-                            categoryId: tileDraft.category_id,
-                            previewHash: tileDraft.thumbnail,
-                        },
-                        {
-                            isGroupMember: Boolean(tileDraft.group_id),
-                            groupPresetId: tileDraft.group_preset_id || null,
-                            instanceId: tileDraft.instance_id,
-                            state: state,
-                        }
-                    );
+                    const { data, context } = buildTileEditorArgs(tileDraft);
+                    presetModalManager.open(data, context);
                 },
                 notifyRefresh
             );
@@ -291,36 +303,22 @@ app.registerExtension({
                 () => globalLibrary.categories || [],
                 (tileDraft) => {
                     if (!tileDraft) return;
-                    presetModalManager.open(
-                        {
-                            id: tileDraft.ref_preset_id || undefined,
-                            ref_preset_id: tileDraft.ref_preset_id || undefined,
-                            group_id: tileDraft.group_id || undefined,
-                            group_preset_id: tileDraft.group_preset_id || undefined,
-                            instance_id: tileDraft.instance_id,
-                            title: tileDraft.title,
-                            text: tileDraft.prompt,
-                            categoryId: tileDraft.category_id,
-                            previewHash: tileDraft.thumbnail,
+                    const { data, context } = buildTileEditorArgs(tileDraft);
+                    presetModalManager.open(data, {
+                        ...context,
+                        // 单次打开专用回调，避免污染管理器上共享的 onSaved
+                        onSaved: async (savedEntry) => {
+                            await refreshGlobalData();
+                            if (savedEntry) {
+                                state.markTileAsSavedToPreset(
+                                    tileDraft.instance_id,
+                                    savedEntry,
+                                    globalLibrary.categories || []
+                                );
+                            }
+                            await notifyAllNodesRefresh();
                         },
-                        {
-                            isGroupMember: Boolean(tileDraft.group_id),
-                            groupPresetId: tileDraft.group_preset_id || null,
-                            instanceId: tileDraft.instance_id,
-                            state: state,
-                        }
-                    );
-                    presetModalManager.onSaved = async (savedEntry) => {
-                        await refreshGlobalData();
-                        if (savedEntry) {
-                            state.markTileAsSavedToPreset(
-                                tileDraft.instance_id,
-                                savedEntry,
-                                globalLibrary.categories || []
-                            );
-                        }
-                        await notifyAllNodesRefresh();
-                    };
+                    });
                 }
             );
 
