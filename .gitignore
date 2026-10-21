@@ -33,6 +33,9 @@ ENV/
 *.swp
 *.swo
 
+# 本地评审与设计文档（工作产物，不入库）
+docs/
+
 # 用户运行时持久化数据 (仅保留目录结构占位，不追踪用户词库与图片)
 data/presets.json
 data/thumbnails/*
