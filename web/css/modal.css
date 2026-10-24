@@ -4,6 +4,7 @@
  * 弹窗样式表。
  * 建立严密的弹窗三级尺寸分级规范（compact / medium / large），
  * 确保大型导入冲突弹窗主体全高度纵向平滑滚动、吸底底栏与全功能折叠交互面板。
+ * 支持组合组员列表微型纯图标操作条（仅组合切换与移除）。
  */
 
 .prompt-vault-modal-overlay {
@@ -74,7 +75,7 @@
     gap: 12px;
 }
 
-/* 2. 中型表单型弹窗 (新建词条、导出预览) */
+/* 2. 中型表单型弹窗 (新建词条、导出预览、组合管理) */
 .prompt-vault-modal.pv-modal-medium {
     width: 660px;
     max-width: 90vw;
@@ -291,6 +292,98 @@
     opacity: 0 !important;
     position: absolute !important;
     pointer-events: none !important;
+}
+
+/* ========================================================
+   组合弹窗组员列表专属操作条样式（方案2纯图标）
+   ======================================================== */
+
+.pv-group-member-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: var(--pv-radius-sm);
+    transition: background-color 0.12s ease;
+}
+
+.pv-group-member-item:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.pv-group-member-index {
+    color: var(--pv-text-secondary);
+    font-family: var(--pv-font-mono);
+    font-size: 11px;
+    width: 22px;
+    flex-shrink: 0;
+}
+
+.pv-group-member-title {
+    color: var(--pv-text-primary);
+    font-weight: 500;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pv-group-member-preview {
+    color: var(--pv-text-muted);
+    font-size: 11px;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.pv-group-member-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.pv-group-member-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--pv-radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--pv-text-muted);
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.15s ease;
+}
+
+.pv-group-member-action-btn:hover {
+    background-color: var(--pv-bg-card-hover);
+    color: var(--pv-text-primary);
+    border-color: var(--pv-border-subtle);
+}
+
+.pv-group-member-action-btn.is-active {
+    background-color: rgba(124, 58, 237, 0.18);
+    color: #a78bfa;
+    border-color: rgba(124, 58, 237, 0.35);
+}
+
+.pv-group-member-action-btn.is-active:hover {
+    background-color: rgba(124, 58, 237, 0.28);
+    color: #c4b5fd;
+}
+
+.pv-group-member-action-btn.is-danger:hover {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
 }
 
 /* ========================================================

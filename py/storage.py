@@ -4,7 +4,7 @@
 基于 suski-prompt-library v1 标准数据模型实现统一单文件管理，
 将词条 entries 与关系型提示词组 groups 物理分离，支持向下兼容迁移旧标准包。
 提供线程安全的原子写入、分类树级联、标签映射、词条重名 (count) 自动处理、
-词条删除对组合 entryIds 的自动级联清理以及全量 CRUD 操作。
+词条删除对组合 entryIds 的自动级联清理、仅用于组合 (groupOnly) 标记支持以及全量 CRUD 操作。
 """
 
 import json
@@ -70,7 +70,9 @@ class StorageManager:
                     data.setdefault("categories", [])
                     data.setdefault("collections", [])
                     data.setdefault("tags", [])
-                    data.setdefault("entries", [])
+                    entries: List[Dict[str, Any]] = data.setdefault("entries", [])
+                    for entry in entries:
+                        entry.setdefault("groupOnly", False)
                     data.setdefault("groups", [])
                     data.setdefault("selection", {"entryIds": []})
                     return data
@@ -154,6 +156,15 @@ class StorageManager:
                 entry_payload.get("title") or "未命名词条", existing_titles
             )
 
+            # 解析 groupOnly，若 payload 缺失则检查已有词条状态
+            has_group_only_flag = (
+                "groupOnly" in entry_payload or "group_only" in entry_payload
+            )
+            raw_group_only = entry_payload.get("groupOnly")
+            if raw_group_only is None:
+                raw_group_only = entry_payload.get("group_only", False)
+            group_only = bool(raw_group_only)
+
             entry_item: Dict[str, Any] = {
                 "id": target_id,
                 "title": clean_title,
@@ -169,11 +180,14 @@ class StorageManager:
                 "updatedAt": now_str,
                 "tagIds": tag_ids,
                 "collections": entry_payload.get("collections") or [],
+                "groupOnly": group_only,
             }
 
             found = False
             for idx, existing in enumerate(entries):
                 if existing.get("id") == target_id:
+                    if not has_group_only_flag:
+                        entry_item["groupOnly"] = existing.get("groupOnly", False)
                     entries[idx] = {**existing, **entry_item}
                     found = True
                     break
@@ -410,6 +424,7 @@ class StorageManager:
 
             used_entry_titles: Set[str] = set()
             for entry in imported_data["entries"]:
+                entry.setdefault("groupOnly", False)
                 entry["title"] = _resolve_unique_title(
                     entry.get("title", ""), used_entry_titles
                 )
@@ -443,6 +458,7 @@ class StorageManager:
 
             ent_map = {e["id"]: e for e in cur.get("entries", [])}
             for e in imported_data.get("entries", []):
+                e.setdefault("groupOnly", False)
                 ent_map[e["id"]] = e
             cur["entries"] = list(ent_map.values())
 

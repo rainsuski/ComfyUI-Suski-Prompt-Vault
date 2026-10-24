@@ -5,6 +5,7 @@
  * 提词条视图与组合视图切换、精简单行搜索展开、
  * 组视图手风琴二级折叠展开、跨视图平滑滚动定位与微光闪烁、
  * 组合卡片与词条保持一致的点击添加/删除模式，箭头独立折叠，支持组信息快速编辑。
+ * 支持仅用于组合（groupOnly）条目在词条视图中自动过滤隐藏。
  */
 
 import { deleteGroup } from "../api.js";
@@ -448,7 +449,12 @@ export class LeftVaultComponent {
             this.state.selectedTiles.map((t) => t.ref_preset_id).filter(Boolean)
         );
 
+        const visibleEntriesTotal = entries.filter((e) => !e.groupOnly).length;
+
         const filtered = entries.filter((item) => {
+            // 仅用于组合的词条不在单体词条视图中显示
+            if (item.groupOnly) return false;
+
             if (this.filterCategory !== "ALL") {
                 if (item.categoryId !== this.filterCategory) return false;
             }
@@ -519,7 +525,7 @@ export class LeftVaultComponent {
             });
         }
 
-        this.footer.textContent = `词条共 ${entries.length} 条 (展示 ${filtered.length} 条)`;
+        this.footer.textContent = `词条共 ${visibleEntriesTotal} 条 (展示 ${filtered.length} 条)`;
     }
 
     renderGroupView(groups, entries, categories, tagsDict) {
