@@ -302,7 +302,7 @@ export class ExportModalManager {
     if (this.currentTab === "share") {
       return `
         <div style="margin-right: auto; font-size: 11px; color: var(--pv-text-muted); display: flex; align-items: center; gap: 6px;">
-          <span>• 超紧凑编码，支持直接发 QQ/微信</span>
+          <span>• 默认包含中栏已选中词条，如不需要请点击清空</span>
           <span>• 导入方可自主归属分类与收藏夹</span>
         </div>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-export-cancel">关闭</button>
@@ -461,7 +461,7 @@ export class ExportModalManager {
             if (codeStat) {
               const compLen = shareCode.length;
               const isQqSafe = compLen <= 3500;
-              codeStat.innerHTML = `长度: <strong>${compLen}</strong> 字符 · ${isQqSafe ? "<span style='color:#34d399;'>可发QQ单条消息</span>" : "<span style='color:#f59e0b;'>建议分段发送</span>"}`;
+              codeStat.innerHTML = `长度: <strong>${compLen}</strong> 字符 · ${isQqSafe ? "<span style='color:#34d399;'>去分享吧喵~</span>" : "<span style='color:#f59e0b;'>建议分段发送</span>"}`;
             }
           }
 

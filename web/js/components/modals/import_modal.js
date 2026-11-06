@@ -158,7 +158,7 @@ export class ImportModalManager {
           <span style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(16, 185, 129, 0.15); color: #10b981;">
             ${getSafeIcon("check", 13)}
           </span>
-          <span style="font-weight: 700; color: #f3f4f6; font-size: 13px;">分享代码校验通过 (极速超轻格式)</span>
+          <span style="font-weight: 700; color: #f3f4f6; font-size: 13px;">分享代码校验通过</span>
           <span style="margin-left: auto; font-size: 11px; color: var(--pv-text-muted);">离线解码校验完成</span>
         </div>
         <div class="pv-metric-grid">
