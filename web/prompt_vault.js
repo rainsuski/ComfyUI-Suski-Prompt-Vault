@@ -217,7 +217,6 @@ app.registerExtension({
 
             /**
              * 把中栏磁贴转换为预设弹窗入参。
-             * v2 起磁贴可同时归属多个组合，此处只取首个归属作为编辑上下文。
              * @param {any} tileDraft
              */
             const buildTileEditorArgs = (tileDraft) => {
@@ -244,31 +243,7 @@ app.registerExtension({
                 };
             };
 
-            const importInput = document.createElement("input");
-            importInput.type = "file";
-            importInput.accept = ".json";
-            importInput.style.display = "none";
-            importInput.addEventListener("change", (e) => {
-                const target = /** @type {HTMLInputElement} */ (e.target);
-                const file = target.files && target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                        try {
-                            const text = String(event.target?.result || "").replace(/^\ufeff/, "");
-                            const parsed = JSON.parse(text);
-                            importModalManager.open(parsed, file.name, file.size);
-                        } catch (err) {
-                            alert(`读取 JSON 文件失败: ${String(err)}`);
-                        }
-                    };
-                    reader.readAsText(file);
-                    importInput.value = "";
-                }
-            });
-            container.appendChild(importInput);
-
-            // 挂载左栏组件
+            // 挂载左栏组件（导入直接打开综合导入中心，导出注入当前工作区状态以支持选定工作区词条）
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -277,8 +252,8 @@ app.registerExtension({
                 (entry) => favoriteModalManager.handleToggleFavorite(entry),
                 () => taxonomyModalManager.open(),
                 (entry) => tileDeleteConfirmModal.open(entry),
-                () => importInput.click(),
-                () => exportModalManager.open(),
+                () => importModalManager.open(),
+                () => exportModalManager.open(state),
                 (group) => saveGroupModalManager.openEdit(group)
             );
 
@@ -306,7 +281,6 @@ app.registerExtension({
                     const { data, context } = buildTileEditorArgs(tileDraft);
                     presetModalManager.open(data, {
                         ...context,
-                        // 单次打开专用回调，避免污染管理器上共享的 onSaved
                         onSaved: async (savedEntry) => {
                             await refreshGlobalData();
                             if (savedEntry) {
@@ -348,9 +322,7 @@ app.registerExtension({
                         get() {
                             return undefined;
                         },
-                        set(_) {
-                            // 拦截侧边栏非法写入，强制让 LiteGraph 永远回退至 node.size[0]
-                        },
+                        set(_) { },
                         configurable: true,
                         enumerable: true,
                     });

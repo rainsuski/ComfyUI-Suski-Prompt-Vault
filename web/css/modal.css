@@ -387,7 +387,7 @@
 }
 
 /* ========================================================
-   分类与收藏夹管理中心样式
+   分类与收藏夹管理中心样式 (完整保留！)
    ======================================================== */
 
 .prompt-vault-tab-switch {
@@ -610,7 +610,7 @@
 }
 
 /* ========================================================
-   导入预检与冲突处理面板专属样式
+   导入预检与冲突处理面板专属样式 (兼容本地备份文件导入)
    ======================================================== */
 
 .pv-import-banner {
@@ -713,7 +713,6 @@
     color: #ef4444;
 }
 
-/* 折叠卡片 */
 .pv-accordion-section {
     display: flex;
     flex-direction: column;
@@ -755,7 +754,6 @@
     color: var(--pv-text-muted);
 }
 
-/* 旋转展开图标 */
 .pv-acc-chevron {
     display: inline-flex;
     align-items: center;
@@ -783,7 +781,6 @@
     display: flex;
 }
 
-/* 冲突单项行 */
 .pv-conflict-row {
     display: flex;
     align-items: center;
@@ -826,7 +823,6 @@
     outline: none;
 }
 
-/* 通用列表行（用于已有词条、无效词条展示） */
 .pv-entry-item-row {
     display: flex;
     align-items: center;
@@ -854,7 +850,7 @@
 }
 
 /* ========================================================
-   导出预览中心专属样式
+   导出预览卡片专属样式 (保留原版)
    ======================================================== */
 
 .pv-export-card {
@@ -942,4 +938,624 @@
     font-size: 12px;
     color: var(--pv-text-secondary);
     margin-top: 6px;
+}
+
+/* =========================================================================
+   ★★★★★ 全新高颜值：批量分享与高级导入设计系统 ★★★★★
+   ========================================================================= */
+
+/* 顶部模式切换胶囊栏 */
+.pv-modal-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 10px 18px 0 18px;
+    background-color: rgba(0, 0, 0, 0.25);
+    border-bottom: 1px solid var(--pv-border-subtle);
+    flex-shrink: 0;
+}
+
+.pv-modal-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--pv-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.pv-modal-tab-btn:hover {
+    color: var(--pv-text-primary);
+}
+
+.pv-modal-tab-btn.is-active {
+    color: var(--pv-accent-primary, #3b82f6);
+    border-bottom-color: var(--pv-accent-primary, #3b82f6);
+}
+
+/* --- 导入代码主区域 --- */
+.pv-import-code-container {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.pv-import-input-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    padding: 12px 14px;
+    box-sizing: border-box;
+}
+
+.pv-import-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pv-text-secondary);
+}
+
+.pv-import-input-label code {
+    font-family: var(--pv-font-mono);
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.12);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.pv-import-code-textarea {
+    width: 100%;
+    min-height: 70px;
+    box-sizing: border-box;
+    font-family: var(--pv-font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-sm);
+    color: #cbd5e1;
+    padding: 8px 10px;
+    resize: vertical;
+    outline: none;
+    transition: all 0.15s ease;
+}
+
+.pv-import-code-textarea:focus {
+    border-color: var(--pv-accent-primary, #3b82f6);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+.pv-import-status-text {
+    font-size: 11px;
+    min-height: 18px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 校验成功卡片与微型数据仪表盘 (Metric Grid) */
+.pv-import-preview-card {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(24, 24, 27, 0.6) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.28);
+    border-radius: var(--pv-radius-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    animation: promptVaultModalFadeIn 0.18s ease-out;
+}
+
+.pv-import-preview-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.pv-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    width: 100%;
+}
+
+.pv-metric-card {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--pv-radius-sm);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.pv-metric-num {
+    font-size: 16px;
+    font-weight: 700;
+    color: #f3f4f6;
+    line-height: 1.2;
+    font-family: var(--pv-font-mono);
+}
+
+.pv-metric-label {
+    font-size: 10px;
+    color: var(--pv-text-muted);
+    margin-top: 2px;
+}
+
+/* 分类与收藏夹决策卡片组 (Radio Cards) */
+.pv-import-decision-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 100%;
+}
+
+.pv-import-decision-box {
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+}
+
+.pv-import-decision-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--pv-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--pv-border-subtle);
+}
+
+.pv-import-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pv-radio-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-sm);
+    cursor: pointer;
+    transition: all 0.12s ease;
+    font-size: 12px;
+    color: var(--pv-text-secondary);
+}
+
+.pv-radio-card:hover {
+    background-color: var(--pv-bg-card-hover);
+    border-color: var(--pv-border-strong);
+    color: var(--pv-text-primary);
+}
+
+.pv-radio-card.is-active {
+    background-color: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #f3f4f6;
+}
+
+.pv-radio-card input[type="radio"] {
+    accent-color: var(--pv-accent-primary, #3b82f6);
+    cursor: pointer;
+    margin: 0;
+}
+
+.pv-sub-select-wrap {
+    padding: 0 4px 4px 26px;
+}
+
+/* 待入库条目预览列表容器 */
+.pv-import-preview-list-box {
+    background-color: var(--pv-bg-card);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pv-import-preview-list {
+    max-height: 130px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 4px;
+}
+
+.pv-import-item-tile {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 10px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-sm);
+    transition: all 0.12s ease;
+}
+
+.pv-import-item-tile:hover {
+    border-color: var(--pv-border-strong);
+    background-color: var(--pv-bg-card-hover);
+}
+
+.pv-import-item-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #f3f4f6;
+    flex: 0 0 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pv-import-item-text {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    flex: 1 1 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--pv-font-mono);
+}
+
+/* =========================================================================
+   ★★★★★ 批量分享与导出弹窗全新科技感样式 ★★★★★
+   ========================================================================= */
+
+.pv-share-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* 顶部一体化过滤与操作栏 */
+.pv-share-filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background-color: var(--pv-bg-card);
+    padding: 8px 12px;
+    border-radius: var(--pv-radius-md);
+    border: 1px solid var(--pv-border-subtle);
+    box-sizing: border-box;
+}
+
+.pv-share-filter-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.pv-share-search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    max-width: 260px;
+}
+
+.pv-share-search-icon {
+    position: absolute;
+    left: 8px;
+    color: var(--pv-text-muted);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+}
+
+.pv-share-search-input {
+    width: 100%;
+    height: 28px;
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-strong);
+    border-radius: var(--pv-radius-sm);
+    color: var(--pv-text-primary);
+    font-size: 12px;
+    padding: 0 10px 0 28px;
+    outline: none;
+    box-sizing: border-box;
+    transition: all 0.15s ease;
+}
+
+.pv-share-search-input:focus {
+    border-color: var(--pv-accent-primary, #3b82f6);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+.pv-share-cat-dropdown {
+    width: 140px;
+    height: 28px;
+    padding: 0 8px;
+    font-size: 11px;
+}
+
+.pv-share-action-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.pv-share-btn-accent {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: var(--pv-radius-sm);
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #93c5fd;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.pv-share-btn-accent:hover {
+    background: rgba(59, 130, 246, 0.22);
+    border-color: #60a5fa;
+    color: #ffffff;
+}
+
+.pv-share-btn-subtle {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: var(--pv-radius-sm);
+    background-color: var(--pv-bg-input);
+    border: 1px solid var(--pv-border-subtle);
+    color: var(--pv-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+}
+
+.pv-share-btn-subtle:hover {
+    background-color: var(--pv-bg-card-hover);
+    color: var(--pv-text-primary);
+    border-color: var(--pv-border-strong);
+}
+
+/* 次级导航栏：胶囊切换与已选计数 */
+.pv-share-subnav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+}
+
+.pv-share-pill-toggle {
+    display: flex;
+    background-color: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-pill);
+    padding: 2px;
+    gap: 2px;
+}
+
+.pv-share-pill-btn {
+    background: transparent;
+    border: none;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: var(--pv-radius-pill);
+    color: var(--pv-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.pv-share-pill-btn:hover {
+    color: var(--pv-text-primary);
+}
+
+.pv-share-pill-btn.is-active {
+    background-color: #333842;
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.pv-share-selected-badge {
+    font-size: 12px;
+    color: var(--pv-text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pv-share-selected-badge strong {
+    color: var(--pv-accent-primary, #3b82f6);
+    font-size: 14px;
+    font-family: var(--pv-font-mono);
+}
+
+/* 词条卡片轨道视口 */
+.pv-share-viewport-wrap {
+    height: 250px;
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid var(--pv-border-subtle);
+    border-radius: var(--pv-radius-md);
+    background-color: var(--pv-bg-input);
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    gap: 4px;
+    box-sizing: border-box;
+}
+
+/* 每一项条目卡片 */
+.pv-share-card-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    background-color: var(--pv-bg-card);
+    border: 1px solid transparent;
+    border-radius: var(--pv-radius-sm);
+    cursor: pointer;
+    transition: all 0.12s ease;
+    user-select: none;
+    box-sizing: border-box;
+}
+
+.pv-share-card-item:hover {
+    background-color: var(--pv-bg-card-hover);
+    border-color: var(--pv-border-subtle);
+}
+
+.pv-share-card-item.is-selected {
+    background-color: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.pv-share-card-checkbox-wrap {
+    padding-top: 2px;
+    flex-shrink: 0;
+}
+
+.pv-share-checkbox,
+.pv-share-group-checkbox {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--pv-accent-primary, #3b82f6);
+    cursor: pointer;
+    margin: 0;
+}
+
+.pv-share-card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.pv-share-card-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.pv-share-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f3f4f6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pv-share-cat-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: var(--pv-radius-pill);
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.pv-share-count-tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: #a78bfa;
+    background: rgba(124, 58, 237, 0.15);
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.pv-share-card-snippet {
+    font-size: 11px;
+    color: var(--pv-text-muted);
+    font-family: var(--pv-font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.pv-share-empty-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 10px;
+    color: var(--pv-text-muted);
+    font-size: 12px;
+}
+
+/* 生成后的分享代码卡片面板 */
+.pv-share-result-panel {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(24, 24, 27, 0.7) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: var(--pv-radius-md);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: promptVaultModalFadeIn 0.18s ease-out;
+}
+
+.pv-share-result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.pv-share-stat-pill {
+    font-size: 11px;
+    color: #93c5fd;
+    font-family: var(--pv-font-mono);
+}
+
+.pv-share-result-textarea {
+    width: 100%;
+    min-height: 60px;
+    background-color: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--pv-radius-sm);
+    color: #93c5fd;
+    font-family: var(--pv-font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    word-break: break-all;
+    resize: vertical;
+    outline: none;
 }
