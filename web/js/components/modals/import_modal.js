@@ -4,7 +4,7 @@
  * 导入中心（ImportModalManager）。
  * 支持：
  * 1. 批量分享代码一键导入：兼容 V3（含 nl 字段）/ V2 极简超紧凑格式与 V1 全量格式、分类与收藏夹自主决策、完整还原标签与提示词组拓扑；
- * 2. 本地备份 JSON 文件导入：五维冲突预检（含 title/text/nl 比对）与差异合并。
+ * 2. 本地备份 JSON 文件导入：五维冲突预检（含 title/text/nl 比对，其中 nl 保留首尾空白差异）与差异合并。
  */
 
 import { importLibrary } from "../../api.js";
@@ -271,10 +271,11 @@ export class ImportModalManager {
     const localEntries = localLib.entries || [];
     const rawEntries = Array.isArray(importedData) ? importedData : (importedData?.entries || []);
 
+    const normalizeNl = (val) => String(val || "").replace(/\r\n/g, "\n");
     const localIdMap = new Map(localEntries.map((e) => [e.id, e]));
     const localContentSet = new Set(
       localEntries.map(
-        (e) => `${(e.title || "").trim()}:::${(e.text || e.prompt || "").trim()}:::${(e.nl || "").trim()}`
+        (e) => `${(e.title || "").trim()}:::${(e.text || e.prompt || "").trim()}:::${normalizeNl(e.nl)}`
       )
     );
 
@@ -288,9 +289,9 @@ export class ImportModalManager {
     rawEntries.forEach((item) => {
       const itemTitle = (item.title || "").trim();
       const itemText = (item.text || item.prompt || "").trim();
-      const itemNl = (item.nl || "").trim();
+      const itemNlRaw = normalizeNl(item.nl);
 
-      if (!itemTitle && !itemText && !itemNl) {
+      if (!itemTitle && !itemText && !itemNlRaw.trim()) {
         this.fileInvalidEntries.push({ item, reason: "缺少标题与提示词内容" });
         return;
       }
@@ -305,8 +306,8 @@ export class ImportModalManager {
       if (localExact) {
         const localText = (localExact.text || localExact.prompt || "").trim();
         const localTitle = (localExact.title || "").trim();
-        const localNl = (localExact.nl || "").trim();
-        if (localText === itemText && localTitle === itemTitle && localNl === itemNl) {
+        const localNlRaw = normalizeNl(localExact.nl);
+        if (localText === itemText && localTitle === itemTitle && localNlRaw === itemNlRaw) {
           this.fileExistingEntries.push(item);
         } else {
           this.fileConflictEntries.push({
@@ -317,7 +318,7 @@ export class ImportModalManager {
           });
         }
       } else {
-        const contentKey = `${itemTitle}:::${itemText}:::${itemNl}`;
+        const contentKey = `${itemTitle}:::${itemText}:::${itemNlRaw}`;
         if (localContentSet.has(contentKey)) {
           this.fileConflictEntries.push({
             item,

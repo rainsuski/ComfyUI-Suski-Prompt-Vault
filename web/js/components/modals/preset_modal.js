@@ -4,6 +4,7 @@
  * 单个词条录入与编辑弹窗（PresetModalManager）。
  * 适配 v2 归一化规范：词条是独立实体，组合维护 entryIds 列表。
  * 支持 Tag 与自然语言 (NL) 双字段录入校验（二者不可同时为空），
+ * 入库时保留 NL 文本首尾空白与换行以便用户自主控制多段 NL 拼接间隔，
  * 支持普通词条【保存】/【新建】与组合成员【另存为】/【保存至组】场景化操作，
  * 集成 Tag 智能快捷键（Ctrl+滚轮 / 方向键快速调权），
  * 严格执行全库项唯一重名校验。
@@ -325,7 +326,8 @@ export class PresetModalManager {
     async submitStandardForm() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
-        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
+        // NL 文本保留首尾空格与换行，交由用户控制多段 NL 拼接时的间隔
+        const nl = this.overlay.querySelector("#pv-form-nl")?.value || "";
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -335,7 +337,7 @@ export class PresetModalManager {
             alert("请输入词条标题！");
             return;
         }
-        if (!prompt && !nl) {
+        if (!prompt && !nl.trim()) {
             alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }
@@ -391,7 +393,7 @@ export class PresetModalManager {
     async submitSaveAsNew() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
-        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
+        const nl = this.overlay.querySelector("#pv-form-nl")?.value || "";
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -401,7 +403,7 @@ export class PresetModalManager {
             alert("请输入词条标题！");
             return;
         }
-        if (!prompt && !nl) {
+        if (!prompt && !nl.trim()) {
             alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }
@@ -456,7 +458,7 @@ export class PresetModalManager {
     async submitSaveToGroup() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
-        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
+        const nl = this.overlay.querySelector("#pv-form-nl")?.value || "";
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -466,7 +468,7 @@ export class PresetModalManager {
             alert("请输入成员标题！");
             return;
         }
-        if (!prompt && !nl) {
+        if (!prompt && !nl.trim()) {
             alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }

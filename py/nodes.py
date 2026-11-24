@@ -1,9 +1,11 @@
 # File: ComfyUI-Suski-Prompt-Vault/py/nodes.py
 """ComfyUI 自定义节点与提示词加权拼接引擎。
 
-定义 PromptVaultSelector 节点类，解析前端传递的磁贴序列并实现加权格式化与清洗。
-支持 prompt/text 与 nl 双模式输出（nl 模式不包裹权重），对 Nodes 2.0 序列化通道进行静默隐藏标记，
-并提供数据探针元数据自省协议接口。
+定义 PromptVaultSelector 节点类，解析前端传递的磁贴序列并实现差异化拼接：
+- Tag 片段执行空白/逗号规范化清洗及 (prompt:weight) 加权；
+- 自然语言 (NL) 片段保留原始文本（含首尾空格、换行与标点），不做权重包裹；
+- NL 与 NL 相邻时不插入分隔符（由用户自行控制），Tag 与任何类型相邻均以 ", " 拼接；
+- 对 Nodes 2.0 序列化通道进行静默隐藏标记，并提供数据探针元数据自省协议接口。
 """
 
 import json
@@ -75,6 +77,21 @@ class PromptVaultSelector:
         return []
 
     @classmethod
+    def _clean_tag_text(cls, raw_text: str) -> str:
+        """规范化 Tag 文本：消除多余连续逗号、折叠冗余空白并清理首尾逗号。"""
+        cleaned = re.sub(r",\s*,+", ", ", raw_text or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned.strip(",").strip()
+
+    @classmethod
+    def _clean_boundary_prompt(cls, raw_text: str) -> str:
+        """清理外置前后置提示词的首尾逗号与空白，同时保留内部换行。"""
+        if not raw_text:
+            return ""
+        cleaned = re.sub(r",\s*,+", ", ", str(raw_text))
+        return cleaned.strip().strip(",").strip()
+
+    @classmethod
     def build_prompt(
         cls,
         selected_tiles_data: Union[str, List[Dict[str, Any]]] = "[]",
@@ -82,21 +99,25 @@ class PromptVaultSelector:
         append_prompt: str = "",
         **kwargs: Any,
     ) -> str:
-        """根据磁贴序列及前置/后置文本生成加权清洗后的提示词。
+        """根据磁贴序列及前置/后置文本生成最终拼接提示词。
 
         输出规则：
-            - use_nl == true: 输出 nl 文本原貌，不做权重包裹。
-            - use_nl == false: 输出 text/prompt；weight == 1.0 时保持原貌，否则格式化为 (prompt:weight)。
+            - use_nl == true: 原样保留 nl 文本（仅跳过纯空白项），不做权重包裹与空白裁剪。
+            - use_nl == false: 清洗 text/prompt；weight == 1.0 时保持原貌，否则格式化为 (prompt:weight)。
+            - prepend_prompt / append_prompt 按 Tag 规则与相邻片段衔接。
             - 忽略所有处于静音 (enabled == false) 状态的磁贴。
+            - 拼接分隔符：NL 与 NL 之间无分隔符；Tag 与任何类型之间使用 ", "。
         """
         tiles = cls.parse_tiles(selected_tiles_data)
-        segments: List[str] = []
+        segments: List[Tuple[str, str]] = []
 
-        # 1. 前置提示词
+        # 1. 前置提示词（按 Tag 类型衔接）
         if prepend_prompt and str(prepend_prompt).strip():
-            segments.append(str(prepend_prompt).strip())
+            cleaned_prepend = cls._clean_boundary_prompt(str(prepend_prompt))
+            if cleaned_prepend:
+                segments.append(("tag", cleaned_prepend))
 
-        # 2. 磁贴序列加权/自然语言处理
+        # 2. 磁贴序列提取与按类型格式化
         for tile in tiles:
             enabled = tile.get("enabled", True)
             if not enabled:
@@ -104,13 +125,19 @@ class PromptVaultSelector:
 
             use_nl = bool(tile.get("use_nl", False))
             if use_nl:
-                nl_content = (tile.get("nl") or "").strip()
-                if not nl_content:
+                nl_raw = tile.get("nl") or ""
+                if not isinstance(nl_raw, str):
+                    nl_raw = str(nl_raw)
+                # 仅以空白校验过滤空条目，保留非空自然语言的首尾空格、换行与标点
+                if not nl_raw.strip():
                     continue
-                segments.append(nl_content)
+                segments.append(("nl", nl_raw))
                 continue
 
-            prompt_content = (tile.get("text") or tile.get("prompt") or "").strip()
+            raw_tag = tile.get("text") or tile.get("prompt") or ""
+            if not isinstance(raw_tag, str):
+                raw_tag = str(raw_tag)
+            prompt_content = cls._clean_tag_text(raw_tag)
             if not prompt_content:
                 continue
 
@@ -125,18 +152,29 @@ class PromptVaultSelector:
                 formatted_weight = f"{weight:.2f}".rstrip("0").rstrip(".")
                 formatted_segment = f"({prompt_content}:{formatted_weight})"
 
-            segments.append(formatted_segment)
+            segments.append(("tag", formatted_segment))
 
-        # 3. 后置提示词
+        # 3. 后置提示词（按 Tag 类型衔接）
         if append_prompt and str(append_prompt).strip():
-            segments.append(str(append_prompt).strip())
+            cleaned_append = cls._clean_boundary_prompt(str(append_prompt))
+            if cleaned_append:
+                segments.append(("tag", cleaned_append))
 
-        # 4. 规范化清洗
-        raw_combined = ", ".join(segments)
-        cleaned_prompt = re.sub(r",\s*,+", ", ", raw_combined)
-        cleaned_prompt = re.sub(r"\s+", " ", cleaned_prompt).strip()
-        cleaned_prompt = cleaned_prompt.strip(",").strip()
-        return cleaned_prompt
+        if not segments:
+            return ""
+
+        # 4. 按相邻片段类型差异化拼接，不在全局做空白或逗号清洗以保护 NL 格式
+        parts: List[str] = [segments[0][1]]
+        for idx in range(1, len(segments)):
+            prev_type, _ = segments[idx - 1]
+            curr_type, curr_text = segments[idx]
+            if prev_type == "nl" and curr_type == "nl":
+                parts.append(curr_text)
+            else:
+                parts.append(", ")
+                parts.append(curr_text)
+
+        return "".join(parts)
 
     @classmethod
     def get_probe_metadata(

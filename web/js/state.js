@@ -127,6 +127,16 @@ function normalizeText(text) {
     return text.replace(/\r\n/g, "\n").trim();
 }
 
+/**
+ * 规范化自然语言文本比较基准：仅统一换行符，保留首尾空白与分隔符。
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeNlText(text) {
+    if (!text) return "";
+    return text.replace(/\r\n/g, "\n");
+}
+
 /* =========================================================================
    v2 磁贴模型辅助
    ========================================================================= */
@@ -1039,7 +1049,7 @@ export class VaultNodeState {
             if (original) {
                 const titleChanged = normalizeText(original.title) !== normalizeText(tile.title);
                 const promptChanged = normalizeText(original.text || original.prompt) !== normalizeText(tile.prompt);
-                const nlChanged = normalizeText(original.nl || "") !== normalizeText(tile.nl);
+                const nlChanged = normalizeNlText(original.nl || "") !== normalizeNlText(tile.nl);
                 const categoryChanged = (original.categoryId || null) !== (tile.category_id || null);
                 tile.is_dirty = titleChanged || promptChanged || nlChanged || categoryChanged;
             } else {
