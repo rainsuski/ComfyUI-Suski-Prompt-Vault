@@ -147,11 +147,13 @@ export function adjustPromptWeightAtCursor(targetInput, delta, min = 0.1, max = 
  * 1. 严格焦点守卫：未聚焦激活时不执行调权，并阻断浏览器网页缩放；
  * 2. Ctrl/Alt/Cmd + ArrowUp/ArrowDown 触发 Tag 增减权；
  * 3. Ctrl/Alt/Cmd + 鼠标滚轮 触发 Tag 增减权（拦截页面缩放与文本滚动，带 40px 惯性阈值保护）；
- * 4. 未按 Ctrl 时的普通滚轮：放行长文本原生顺畅纵向滚动，到达极值边缘时切断画布穿透。
+ * 4. 未按 Ctrl 时的普通滚轮：放行长文本原生顺畅纵向滚动，到达极值边缘时切断画布穿透；
+ * 5. 可选的 shouldHandle 守卫回调：返回 false 时跳过标签调权（如自然语言编辑态）。
  * @param {HTMLTextAreaElement|HTMLInputElement} targetInput
  * @param {() => void} [onModified] - 权重变更后的额外回调
+ * @param {(() => boolean)|null} [shouldHandle=null] - 是否允许触发权重快捷键的守卫函数
  */
-export function bindPromptWeightShortcuts(targetInput, onModified) {
+export function bindPromptWeightShortcuts(targetInput, onModified, shouldHandle = null) {
     if (!targetInput) return;
 
     // 键盘快捷键监听
@@ -159,8 +161,9 @@ export function bindPromptWeightShortcuts(targetInput, onModified) {
         const isModifier = event.ctrlKey || event.altKey || event.metaKey;
         if (!isModifier) return;
 
-        // 焦点守卫：未聚焦激活时不执行任何快捷修改
+        // 焦点守卫：未聚焦激活时不执行快捷修改
         if (document.activeElement !== targetInput) return;
+        if (typeof shouldHandle === "function" && !shouldHandle()) return;
 
         if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -195,8 +198,11 @@ export function bindPromptWeightShortcuts(targetInput, onModified) {
                 // 核心防御：只要按住修饰键，无论是否获得焦点，首先彻底拦截浏览器页面全局缩放与文本滚动
                 event.preventDefault();
 
-                // 严格焦点守卫：若文本框尚未获得焦点，直接静默退出（不调权、不改字、不放大网页）
+                // 严格焦点守卫：若文本框尚未获得焦点或处于禁用调权模式，直接静默退出
                 if (document.activeElement !== targetInput) {
+                    return;
+                }
+                if (typeof shouldHandle === "function" && !shouldHandle()) {
                     return;
                 }
 

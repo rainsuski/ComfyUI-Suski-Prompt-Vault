@@ -300,7 +300,7 @@ export class TaxonomyModalManager {
                 inlineSaveBtn.style.height = "26px";
                 inlineSaveBtn.style.padding = "0 8px";
                 inlineSaveBtn.style.fontSize = "11px";
-                inlineSaveBtn.innerHTML = `<span>✓ 保存</span>`;
+                inlineSaveBtn.innerHTML = `${renderIcon("check", 11)} <span>保存</span>`;
 
                 const inlineCancelBtn = document.createElement("button");
                 inlineCancelBtn.type = "button";
@@ -308,7 +308,7 @@ export class TaxonomyModalManager {
                 inlineCancelBtn.style.height = "26px";
                 inlineCancelBtn.style.padding = "0 6px";
                 inlineCancelBtn.style.fontSize = "11px";
-                inlineCancelBtn.innerHTML = `<span>✕</span>`;
+                inlineCancelBtn.innerHTML = renderIcon("x", 11);
 
                 const doSaveChild = async () => {
                     const childName = inlineInput.value.trim();

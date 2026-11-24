@@ -19,6 +19,10 @@ import { clampAndRoundWeight } from "./utils/prompt_format.js";
 
 /** 词条最近使用记录在浏览器本地存储中的键名 */
 const RECENT_USAGE_STORAGE_KEY = "pv_recent_usage_timestamps";
+/** 左栏最近使用排序开关缓存键名 */
+const LEFT_VAULT_SORT_RECENT_KEY = "pv_left_vault_sort_recent";
+/** 左栏默认展示模式（text / nl）缓存键名 */
+const LEFT_VAULT_DISPLAY_MODE_KEY = "pv_left_vault_display_mode";
 
 /**
  * 记录词条或词组的最近使用时间（毫秒时间戳）到本地浏览器缓存。
@@ -46,6 +50,57 @@ export function getRecentUsageMap() {
         return raw ? JSON.parse(raw) : {};
     } catch (err) {
         return {};
+    }
+}
+
+/**
+ * 读取左栏排序状态（是否按最近使用排序）。
+ * @returns {boolean}
+ */
+export function getLeftVaultSortRecent() {
+    try {
+        const raw = localStorage.getItem(LEFT_VAULT_SORT_RECENT_KEY);
+        if (raw === null) return false;
+        return raw === "true" || JSON.parse(raw) === true;
+    } catch (err) {
+        return false;
+    }
+}
+
+/**
+ * 持久化左栏排序状态。
+ * @param {boolean} sortByRecent
+ */
+export function setLeftVaultSortRecent(sortByRecent) {
+    try {
+        localStorage.setItem(LEFT_VAULT_SORT_RECENT_KEY, JSON.stringify(Boolean(sortByRecent)));
+    } catch (err) {
+        console.warn("[PromptVault] Failed to save left vault sort state:", err);
+    }
+}
+
+/**
+ * 读取左栏默认展示模式。
+ * @returns {"text"|"nl"}
+ */
+export function getLeftVaultDisplayMode() {
+    try {
+        const raw = localStorage.getItem(LEFT_VAULT_DISPLAY_MODE_KEY);
+        return raw === "nl" ? "nl" : "text";
+    } catch (err) {
+        return "text";
+    }
+}
+
+/**
+ * 持久化左栏默认展示模式。
+ * @param {"text"|"nl"} mode
+ */
+export function setLeftVaultDisplayMode(mode) {
+    try {
+        localStorage.setItem(LEFT_VAULT_DISPLAY_MODE_KEY, mode === "nl" ? "nl" : "text");
+    } catch (err) {
+        console.warn("[PromptVault] Failed to save left vault display mode:", err);
     }
 }
 
@@ -115,7 +170,7 @@ export function findMembership(tile, runtimeId) {
 }
 
 /**
- * 把历史 v1 磁贴（单 group_id）升级为 v2（groups + pinned），并兜底修复残缺字段。
+ * 把历史 v1 磁贴（单 group_id）升级为 v2（groups + pinned），并兜底修复残缺字段（含 nl / use_nl）。
  * @param {any} raw
  * @returns {any}
  */
@@ -151,6 +206,9 @@ export function normalizeTileInstance(raw) {
     if (!tile.instance_id) {
         tile.instance_id = nextInstanceId("tile");
     }
+
+    tile.nl = typeof tile.nl === "string" ? tile.nl : (tile.nl || "");
+    tile.use_nl = Boolean(tile.use_nl);
 
     // 清理 v1 遗留字段，避免它们随工作流继续序列化
     delete tile.group_id;
@@ -190,7 +248,7 @@ export function dedupeTilesByRef(tiles) {
  * - LIBRARY:   词库数据被外部改变（CRUD / 导入 / 其它节点广播）
  * - STRUCTURE: 磁贴集合、顺序、组归属发生变化
  * - SELECTION: 激活磁贴或中栏多选集发生变化
- * - CONTENT:   单个磁贴自身字段变化（标题/正文/分类/权重/静音/脏标记/缩略图）
+ * - CONTENT:   单个磁贴自身字段变化（标题/正文/自然语言/模式/分类/权重/静音/脏标记/缩略图）
  */
 export const CHANNEL = {
     LIBRARY: "library",
@@ -207,7 +265,9 @@ export const CHANNEL = {
  * @property {{ runtimeId: string, presetId: string|null, title: string, color: string }[]} groups - 组合归属（0..n）
  * @property {boolean} pinned - 是否由用户直接加入（卸载组合时保留为独立磁贴）
  * @property {string} title - 磁贴名称
- * @property {string} prompt - 提示词内容
+ * @property {string} prompt - 标签提示词内容 (对应词条 text)
+ * @property {string} nl - 自然语言提示词内容 (对应词条 nl)
+ * @property {boolean} use_nl - 当前实际展示与输出模式 (false 为 text, true 为 nl)
  * @property {string|null} category_id - 分类 ID
  * @property {string} category - 分类名称
  * @property {number} weight - 当前权重
@@ -313,9 +373,10 @@ export class VaultNodeState {
      * @param {any} [detail=null] - 附加信息（如 { instanceId }）
      */
     notify(channel = CHANNEL.STRUCTURE, detail = null) {
-        // 仅结构性变化才需要回写隐藏 widget 并刷新画布，避免每次输入都全量序列化
-        if (channel === CHANNEL.STRUCTURE) {
+        if (channel === CHANNEL.STRUCTURE || channel === CHANNEL.CONTENT) {
             this.syncToNodeWidget();
+        }
+        if (channel === CHANNEL.STRUCTURE) {
             // 结构变化会重建行，旧的悬停预览与待消散的定时器一并作废
             this._cancelHoverEnd();
             this.hoverPreviewActive = false;
@@ -411,8 +472,8 @@ export class VaultNodeState {
         const activeTile = this.getActiveTile();
         return Boolean(
             activeTile &&
-                Array.isArray(activeTile.groups) &&
-                activeTile.groups.some((g) => g.runtimeId === runtimeId)
+            Array.isArray(activeTile.groups) &&
+            activeTile.groups.some((g) => g.runtimeId === runtimeId)
         );
     }
 
@@ -544,6 +605,8 @@ export class VaultNodeState {
             pinned: false,
             title: entry.title || "未命名词条",
             prompt: entry.text || entry.prompt || "",
+            nl: entry.nl || "",
+            use_nl: false,
             category_id: entry.categoryId || null,
             category: matchedCat ? matchedCat.name : "未分类",
             weight: 1.0,
@@ -551,6 +614,7 @@ export class VaultNodeState {
             is_dirty: false,
             thumbnail: entry.previewHash || entry.thumbnail || "",
             ...overrides,
+            use_nl: Boolean(overrides.use_nl),
         };
     }
 
@@ -568,12 +632,13 @@ export class VaultNodeState {
 
     /**
      * 从词库单条 entry 实例化并加入已选列表。
-     * 同一词条只允许一个实例，已存在时直接复用。
+     * 同一词条只允许一个实例，已存在时直接复用并保留其当前展示模式。
      * @param {any} entry
      * @param {any[]} categories
+     * @param {{ useNl?: boolean }} [options]
      * @returns {SelectedTileInstance}
      */
-    addTileFromEntry(entry, categories = []) {
+    addTileFromEntry(entry, categories = [], options = {}) {
         if (!entry) return null;
 
         if (entry.id) {
@@ -587,7 +652,11 @@ export class VaultNodeState {
             recordRecentUsage(entry.id);
         }
 
-        const newInstance = this._createTileInstance(entry, categories, { pinned: true });
+        const initialUseNl = Boolean(options.useNl && (entry.nl || "").trim());
+        const newInstance = this._createTileInstance(entry, categories, {
+            pinned: true,
+            use_nl: initialUseNl,
+        });
 
         this.selectedTiles.push(newInstance);
         this.activeInstanceId = newInstance.instance_id;
@@ -599,14 +668,15 @@ export class VaultNodeState {
     }
 
     /**
-     * 以"补齐"方式安装一个组合：只创建缺失的词条，已存在的磁贴仅追加组合归属。
+     * 以"补齐"方式安装一个组合：只创建缺失的词条，已存在的磁贴仅追加组合归属并保留其当前模式。
      * 组合是关系实体，安装只是在磁贴上登记归属；卸载时按引用计数回收。
      * @param {any} group - 组合关系对象 (包含 entryIds)
      * @param {any[]} allEntries - 全量词库 entries 数组
      * @param {any[]} categories - 全量分类数组
+     * @param {{ useNl?: boolean }} [options]
      * @returns {{ added: number, adopted: number, skipped: number }}
      */
-    addGroup(group, allEntries = [], categories = []) {
+    addGroup(group, allEntries = [], categories = [], options = {}) {
         const entryIds = Array.isArray(group.entryIds) ? group.entryIds.filter(Boolean) : [];
         if (entryIds.length === 0) return { added: 0, adopted: 0, skipped: 0 };
 
@@ -643,10 +713,12 @@ export class VaultNodeState {
                 return;
             }
 
+            const initialUseNl = Boolean(options.useNl && (entry.nl || "").trim());
             created.push(
                 this._createTileInstance(entry, categories, {
                     groups: [{ ...membership }],
                     pinned: false,
+                    use_nl: initialUseNl,
                 })
             );
         });
@@ -678,7 +750,7 @@ export class VaultNodeState {
      */
     addEmptyTile() {
         const emptyInstance = this._createTileInstance(
-            { id: null, title: "临时空白词条", text: "", categoryId: null },
+            { id: null, title: "临时空白词条", text: "", nl: "", categoryId: null },
             [],
             { pinned: true, is_dirty: true }
         );
@@ -892,10 +964,43 @@ export class VaultNodeState {
     }
 
     /**
+     * 切换中栏磁贴展示/输出模式（text <-> nl）。
+     * 遵循回退原则：当前处于 text 且 nl 为空时保持 text，无法切入空 nl 状态。
+     * @param {string} instanceId
+     */
+    toggleTileMode(instanceId) {
+        const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (!tile) return;
+
+        if (!tile.use_nl && !(tile.nl || "").trim()) {
+            return;
+        }
+
+        tile.use_nl = !tile.use_nl;
+        this.notify(CHANNEL.CONTENT, { instanceId });
+    }
+
+    /**
+     * 直接设置磁贴展示/输出模式（供右栏编辑器开关调用，允许切入空 nl 现场编写）。
+     * @param {string} instanceId
+     * @param {boolean} useNl
+     */
+    setTileMode(instanceId, useNl) {
+        const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
+        if (!tile) return;
+
+        const nextUseNl = Boolean(useNl);
+        if (Boolean(tile.use_nl) === nextUseNl) return;
+
+        tile.use_nl = nextUseNl;
+        this.notify(CHANNEL.CONTENT, { instanceId });
+    }
+
+    /**
      * 更新磁贴内容并与真实词条进行纯净去脏对比。
      * 加入 Diff 防护：若属性无实际变更且脏标记未变，直接返回，切断无效 notify 与 DOM 销毁。
      * @param {string} instanceId
-     * @param {{ title?: string, prompt?: string, category_id?: string|null, category?: string }} updates
+     * @param {{ title?: string, prompt?: string, nl?: string, category_id?: string|null, category?: string }} updates
      * @param {any[]} allEntries
      */
     updateTileContent(instanceId, updates, allEntries = []) {
@@ -910,6 +1015,10 @@ export class VaultNodeState {
         }
         if (updates.prompt !== undefined && tile.prompt !== updates.prompt) {
             tile.prompt = updates.prompt;
+            hasActualChanges = true;
+        }
+        if (updates.nl !== undefined && tile.nl !== updates.nl) {
+            tile.nl = updates.nl;
             hasActualChanges = true;
         }
         if (updates.category_id !== undefined && tile.category_id !== updates.category_id) {
@@ -929,8 +1038,9 @@ export class VaultNodeState {
             if (original) {
                 const titleChanged = normalizeText(original.title) !== normalizeText(tile.title);
                 const promptChanged = normalizeText(original.text || original.prompt) !== normalizeText(tile.prompt);
+                const nlChanged = normalizeText(original.nl || "") !== normalizeText(tile.nl);
                 const categoryChanged = (original.categoryId || null) !== (tile.category_id || null);
-                tile.is_dirty = titleChanged || promptChanged || categoryChanged;
+                tile.is_dirty = titleChanged || promptChanged || nlChanged || categoryChanged;
             } else {
                 tile.is_dirty = true;
             }
@@ -958,6 +1068,7 @@ export class VaultNodeState {
         tile.ref_preset_id = savedEntry.id;
         tile.title = savedEntry.title || tile.title;
         tile.prompt = savedEntry.text || savedEntry.prompt || tile.prompt;
+        tile.nl = savedEntry.nl !== undefined ? (savedEntry.nl || "") : (tile.nl || "");
         tile.category_id = savedEntry.categoryId || null;
         tile.category = catName;
         tile.thumbnail = savedEntry.previewHash || tile.thumbnail;
@@ -968,13 +1079,14 @@ export class VaultNodeState {
     /**
      * 标记组合内部特定成员已成功入库同步。
      * @param {string} instanceId
-     * @param {{ title?: string, prompt?: string, ref_preset_id?: string }} data
+     * @param {{ title?: string, prompt?: string, nl?: string, ref_preset_id?: string }} data
      */
     markGroupMemberAsSaved(instanceId, data) {
         const tile = this.selectedTiles.find((t) => t.instance_id === instanceId);
         if (!tile) return;
         if (data.title !== undefined) tile.title = data.title;
         if (data.prompt !== undefined) tile.prompt = data.prompt;
+        if (data.nl !== undefined) tile.nl = data.nl || "";
         if (data.ref_preset_id !== undefined) tile.ref_preset_id = data.ref_preset_id;
         tile.is_dirty = false;
         this.notify(CHANNEL.CONTENT, { instanceId });
@@ -998,6 +1110,10 @@ export class VaultNodeState {
 
         tile.title = original.title;
         tile.prompt = original.text || original.prompt || "";
+        tile.nl = original.nl || "";
+        if (!(tile.nl || "").trim()) {
+            tile.use_nl = false;
+        }
         tile.category_id = original.categoryId || null;
         tile.category = matchedCat ? matchedCat.name : "未分类";
         tile.thumbnail = original.previewHash || "";

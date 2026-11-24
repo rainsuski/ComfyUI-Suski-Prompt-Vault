@@ -227,6 +227,25 @@
     box-shadow: 0 0 5px currentColor;
 }
 
+/* 中栏磁贴自然语言模式常驻徽标 */
+.prompt-vault-tile-nl-badge {
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.2;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(6, 182, 212, 0.16);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.35);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.prompt-vault-tile-nl-badge[hidden] {
+    display: none;
+}
+
 /* 词条视图微型组跳转标记 */
 .prompt-vault-group-indicator {
     display: inline-flex;
@@ -320,6 +339,11 @@
 .prompt-vault-tile-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     color: var(--pv-text-primary);
+}
+
+.prompt-vault-tile-btn.is-active {
+    color: #22d3ee;
+    background: rgba(6, 182, 212, 0.16);
 }
 
 .prompt-vault-tile-btn.is-starred {

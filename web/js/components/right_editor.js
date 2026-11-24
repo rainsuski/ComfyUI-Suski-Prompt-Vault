@@ -4,9 +4,8 @@
  * 右侧详情与实时编辑器组件。
  * 保持持久 DOM 引用以杜绝打字过程中的焦点丢失，
  * 直接与标准分类实体 (categoryId) 双向绑定，
- * 精简事件流避免失焦阶段触发无效重新渲染以打断单次点击事件，
- * 集成快捷键（Ctrl+滚轮/方向键）实现光标智能嗅探加减权，
- * 切换磁贴时归零光标位置，确保普通点击编辑完全不受干扰。
+ * 通过标题行胶囊开关支持 Tag / 自然语言 (NL) 双字段切换编辑，并与中栏状态实时双向同步。
+ * 仅在 Tag 模式下触发快捷键（Ctrl+滚轮/方向键）加减权，切换磁贴或模式时归零光标位置。
  */
 
 import { CHANNEL } from "../state.js";
@@ -75,6 +74,8 @@ export class RightEditorComponent {
 
         /** @type {string|null} 当前已渲染绑定的磁贴实例 ID */
         this.renderedInstanceId = null;
+        /** @type {boolean|null} 当前文本域正在编辑的模式 (false: tag, true: nl) */
+        this.renderedUseNl = null;
 
         this.initDOM();
 
@@ -178,13 +179,38 @@ export class RightEditorComponent {
         catGroup.appendChild(this.catSelect);
         this.formContainer.appendChild(catGroup);
 
-        // 3. 提示词主体多行通用文本域
+        // 3. 提示词主体多行文本域 + TAG/NL 胶囊切换开关
         const promptGroup = document.createElement("div");
         promptGroup.className = "prompt-vault-editor-group";
         promptGroup.style.flex = "1 1 0";
         promptGroup.style.display = "flex";
         promptGroup.style.flexDirection = "column";
-        promptGroup.innerHTML = `<label class="prompt-vault-editor-label">提示词</label>`;
+
+        const labelRow = document.createElement("div");
+        labelRow.className = "prompt-vault-editor-label-row";
+        labelRow.innerHTML = `<label class="prompt-vault-editor-label">提示词</label>`;
+
+        this.modeSwitchBtn = document.createElement("button");
+        this.modeSwitchBtn.type = "button";
+        this.modeSwitchBtn.className = "pv-iphone-switch";
+        this.modeSwitchBtn.setAttribute("role", "switch");
+        this.modeSwitchBtn.setAttribute("aria-checked", "false");
+        this.modeSwitchBtn.title = "切换当前磁贴的 Tag / 自然语言 (NL) 编辑与输出模式";
+        this.modeSwitchBtn.innerHTML = `
+      <span class="pv-iphone-switch-text pv-switch-tag">TAG</span>
+      <span class="pv-iphone-switch-track">
+        <span class="pv-iphone-switch-thumb"></span>
+      </span>
+      <span class="pv-iphone-switch-text pv-switch-nl">NL</span>
+    `;
+        this.modeSwitchBtn.addEventListener("click", () => {
+            const activeTile = this.state.getActiveTile();
+            if (!activeTile) return;
+            const nextUseNl = !Boolean(activeTile.use_nl);
+            this.state.setTileMode(activeTile.instance_id, nextUseNl);
+        });
+        labelRow.appendChild(this.modeSwitchBtn);
+        promptGroup.appendChild(labelRow);
 
         this.textarea = document.createElement("textarea");
         this.textarea.className = "prompt-vault-editor-textarea comfy-multiline-input";
@@ -194,17 +220,24 @@ export class RightEditorComponent {
         const syncPrompt = () => {
             const activeTile = this.state.getActiveTile();
             if (activeTile) {
+                const updates = activeTile.use_nl
+                    ? { nl: this.textarea.value }
+                    : { prompt: this.textarea.value };
                 this.state.updateTileContent(
                     activeTile.instance_id,
-                    { prompt: this.textarea.value },
+                    updates,
                     this.getEntries()
                 );
             }
         };
         this.textarea.addEventListener("input", syncPrompt);
 
-        // 接入 Tag 智能加减权（键盘 + Ctrl滚轮调权，带焦点守卫并放行普通长文本滚动）
-        bindPromptWeightShortcuts(this.textarea, syncPrompt);
+        // 仅在 Tag 模式下触发标签智能加减权快捷键，避免误包裹自然语言段落
+        bindPromptWeightShortcuts(
+            this.textarea,
+            syncPrompt,
+            () => !Boolean(this.state.getActiveTile()?.use_nl)
+        );
 
         promptGroup.appendChild(this.textarea);
         this.formContainer.appendChild(promptGroup);
@@ -226,9 +259,12 @@ export class RightEditorComponent {
                     this.getEntries(),
                     this.getCategories()
                 );
+                const useNl = Boolean(activeTile.use_nl);
+                this.renderedUseNl = useNl;
+                this.updateModeSwitchUI(useNl);
                 this.titleInput.value = activeTile.title || "";
                 this.catSelect.value = activeTile.category_id || "";
-                this.textarea.value = activeTile.prompt || "";
+                this.textarea.value = useNl ? (activeTile.nl || "") : (activeTile.prompt || "");
                 this.textarea.setSelectionRange(0, 0);
             }
         });
@@ -251,7 +287,9 @@ export class RightEditorComponent {
                         title: this.titleInput.value.trim(),
                         category_id: catId,
                         category: matched ? matched.name : "未分类",
-                        prompt: this.textarea.value,
+                        ...(activeTile.use_nl
+                            ? { nl: this.textarea.value }
+                            : { prompt: this.textarea.value }),
                     },
                     this.getEntries()
                 );
@@ -269,6 +307,15 @@ export class RightEditorComponent {
 
         this.refreshCategoryOptions();
         this.updateView();
+    }
+
+    updateModeSwitchUI(useNl) {
+        if (!this.modeSwitchBtn) return;
+        this.modeSwitchBtn.classList.toggle("is-nl", Boolean(useNl));
+        this.modeSwitchBtn.setAttribute("aria-checked", useNl ? "true" : "false");
+        this.textarea.placeholder = useNl
+            ? "在此编写自然语言提示词 (NL)..."
+            : "在此编写标签提示词 (Tag)...";
     }
 
     refreshCategoryOptions() {
@@ -305,6 +352,7 @@ export class RightEditorComponent {
 
         if (!activeTile) {
             this.renderedInstanceId = null;
+            this.renderedUseNl = null;
             if (this.statusLabel) this.statusLabel.textContent = "";
             this.emptyState.style.display = "flex";
             this.formContainer.style.display = "none";
@@ -314,18 +362,28 @@ export class RightEditorComponent {
         this.emptyState.style.display = "none";
         this.formContainer.style.display = "flex";
 
+        const useNl = Boolean(activeTile.use_nl);
+        const targetText = useNl ? (activeTile.nl || "") : (activeTile.prompt || "");
+        this.updateModeSwitchUI(useNl);
+
         if (this.renderedInstanceId !== activeTile.instance_id) {
             this.renderedInstanceId = activeTile.instance_id;
+            this.renderedUseNl = useNl;
             this.titleInput.value = activeTile.title || "";
             this.catSelect.value = activeTile.category_id || "";
-            this.textarea.value = activeTile.prompt || "";
+            this.textarea.value = targetText;
             // 切换磁贴时将光标归零至文本开头，消除隐式停在最末尾的副作用
             this.textarea.setSelectionRange(0, 0);
+        } else if (this.renderedUseNl !== useNl) {
+            // 模式切换时立即替换为对应字段文本，并归零光标
+            this.renderedUseNl = useNl;
+            this.textarea.value = targetText;
+            this.textarea.setSelectionRange(0, 0);
         } else {
-            // 同一磁贴的字段回写：正在编辑的控件绝不覆盖，避免光标被弹到末尾
+            // 同一磁贴且同模式的字段回写：正在编辑的控件绝不覆盖，避免光标被弹到末尾
             this.setIfIdle(this.titleInput, activeTile.title || "");
             this.setIfIdle(this.catSelect, activeTile.category_id || "");
-            this.setIfIdle(this.textarea, activeTile.prompt || "");
+            this.setIfIdle(this.textarea, targetText);
         }
 
         if (this.statusLabel) {

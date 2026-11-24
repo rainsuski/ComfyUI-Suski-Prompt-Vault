@@ -12,19 +12,6 @@ import { isolateCanvasEvents } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
 import { buildCategoryHierarchyOptions } from "./category_helper.js";
 
-function getVectorIcon(name, size = 12) {
-  if (name === "layers") {
-    return renderIcon("layers", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>`;
-  }
-  if (name === "x") {
-    return renderIcon("x", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-  }
-  if (name === "check") {
-    return renderIcon("check", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-  }
-  return renderIcon(name, size);
-}
-
 export class SaveGroupModalManager {
   /**
    * @param {() => { categories: any[], entries?: any[], groups?: any[] } | any} getLibraryCallback
@@ -90,7 +77,7 @@ export class SaveGroupModalManager {
       <div class="prompt-vault-modal pv-modal-medium" style="max-width: 560px;">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">存为提示词组</div>
-          <button type="button" class="prompt-vault-modal-close" title="关闭">${getVectorIcon("x", 16)}</button>
+          <button type="button" class="prompt-vault-modal-close" title="关闭">${renderIcon("x", 16)}</button>
         </div>
         <div class="prompt-vault-modal-body">
           <div class="prompt-vault-form-row">
@@ -133,7 +120,7 @@ export class SaveGroupModalManager {
         <div class="prompt-vault-modal-footer">
           <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-group-cancel">取消</button>
           <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-group-submit">
-            ${getVectorIcon("check", 12)} <span>确认并入库</span>
+            ${renderIcon("check", 12)} <span>确认并入库</span>
           </button>
         </div>
       </div>
@@ -169,7 +156,7 @@ export class SaveGroupModalManager {
         const row = document.createElement("div");
         row.className = "pv-group-member-item";
 
-        const cleanPrompt = (item.tile.prompt || "").replace(/[\r\n]+/g, " ");
+        const cleanPrompt = (item.tile.prompt || item.tile.nl || "").replace(/[\r\n]+/g, " ");
 
         row.innerHTML = `
                     <span class="pv-group-member-index">#${idx + 1}</span>
@@ -177,10 +164,10 @@ export class SaveGroupModalManager {
                     <span class="pv-group-member-preview" title="${cleanPrompt}">${cleanPrompt}</span>
                     <div class="pv-group-member-actions">
                         <button type="button" class="pv-group-member-action-btn pv-toggle-grouponly-btn ${item.groupOnly ? "is-active" : ""}" title="${item.groupOnly ? "当前为仅组合专享（点击恢复为普通词条）" : "设为仅组合专享（从词库视图隐藏）"}">
-                            ${getVectorIcon("layers", 13)}
+                            ${renderIcon("layers", 13)}
                         </button>
                         <button type="button" class="pv-group-member-action-btn is-danger pv-delete-member-btn" title="从待打包组合中移除">
-                            ${getVectorIcon("x", 12)}
+                            ${renderIcon("x", 12)}
                         </button>
                     </div>
                 `;
@@ -257,17 +244,19 @@ export class SaveGroupModalManager {
       submitBtn.textContent = "保存中...";
 
       try {
-        // 1. 自动持久化所有未入库的临时词条（携带 groupOnly 设定）
+        // 1. 自动持久化所有未入库的临时词条（携带 nl 与 groupOnly 设定）
         for (const draft of draftMembers) {
           const entryRes = await upsertEntry({
             title: draft.tile.title || "未命名词条",
             text: draft.tile.prompt || "",
+            nl: draft.tile.nl || "",
             categoryId: draft.tile.category_id || categoryId,
             note: "打包组合时自动创建入库",
             groupOnly: draft.groupOnly,
           });
           if (entryRes && entryRes.success && entryRes.data) {
             draft.tile.ref_preset_id = entryRes.data.id;
+            draft.tile.nl = entryRes.data.nl || draft.tile.nl || "";
             draft.tile.is_dirty = false;
           } else {
             throw new Error(`自动创建词条 [${draft.tile.title}] 失败`);
@@ -362,7 +351,7 @@ export class SaveGroupModalManager {
       <div class="prompt-vault-modal pv-modal-medium" style="max-width: 560px;">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">编辑提示词组</div>
-          <button type="button" class="prompt-vault-modal-close" title="关闭">${getVectorIcon("x", 16)}</button>
+          <button type="button" class="prompt-vault-modal-close" title="关闭">${renderIcon("x", 16)}</button>
         </div>
         <div class="prompt-vault-modal-body">
           <div class="prompt-vault-form-row">
@@ -391,23 +380,26 @@ export class SaveGroupModalManager {
             <div class="prompt-vault-group-preview-list" style="max-height: 190px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid var(--pv-border-subtle); border-radius: var(--pv-radius-sm); padding: 6px 10px; display: flex; flex-direction: column; gap: 4px;">
               ${memberEntries.length === 0
         ? `<div style="font-size: 11px; color: var(--pv-text-muted); text-align: center; padding: 12px 0;">该组合暂无成员词条</div>`
-        : memberEntries.map((entry, idx) => `
+        : memberEntries.map((entry, idx) => {
+          const previewText = (entry.text || entry.prompt || entry.nl || "").replace(/[\r\n]+/g, " ");
+          return `
                 <div class="pv-group-member-item">
                   <span class="pv-group-member-index">#${idx + 1}</span>
                   <span class="pv-group-member-title" title="${entry.title || "未命名词条"}">${entry.title || "未命名词条"}</span>
-                  <span class="pv-group-member-preview" title="${(entry.text || entry.prompt || "").replace(/[\r\n]+/g, " ")}">${(entry.text || entry.prompt || "").replace(/[\r\n]+/g, " ")}</span>
+                  <span class="pv-group-member-preview" title="${previewText}">${previewText}</span>
                   <div class="pv-group-member-actions">
-                    ${entry.groupOnly ? `<span class="pv-group-member-action-btn is-active" title="仅组合专享条目">${getVectorIcon("layers", 13)}</span>` : ""}
+                    ${entry.groupOnly ? `<span class="pv-group-member-action-btn is-active" title="仅组合专享条目">${renderIcon("layers", 13)}</span>` : ""}
                   </div>
                 </div>
-              `).join("")}
+              `;
+        }).join("")}
             </div>
           </div>
         </div>
         <div class="prompt-vault-modal-footer">
           <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-edit-group-cancel">取消</button>
           <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-edit-group-submit">
-            ${getVectorIcon("check", 12)} <span>保存修改</span>
+            ${renderIcon("check", 12)} <span>保存修改</span>
           </button>
         </div>
       </div>

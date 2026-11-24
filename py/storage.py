@@ -73,6 +73,7 @@ class StorageManager:
                     entries: List[Dict[str, Any]] = data.setdefault("entries", [])
                     for entry in entries:
                         entry.setdefault("groupOnly", False)
+                        entry.setdefault("nl", "")
                     data.setdefault("groups", [])
                     data.setdefault("selection", {"entryIds": []})
                     return data
@@ -169,6 +170,7 @@ class StorageManager:
                 "id": target_id,
                 "title": clean_title,
                 "text": entry_payload.get("text") or entry_payload.get("prompt") or "",
+                "nl": entry_payload.get("nl") or "",
                 "note": entry_payload.get("note") or "",
                 "position": entry_payload.get("position", len(entries)),
                 "categoryId": entry_payload.get("categoryId")
@@ -425,6 +427,7 @@ class StorageManager:
             used_entry_titles: Set[str] = set()
             for entry in imported_data["entries"]:
                 entry.setdefault("groupOnly", False)
+                entry.setdefault("nl", "")
                 entry["title"] = _resolve_unique_title(
                     entry.get("title", ""), used_entry_titles
                 )
@@ -459,6 +462,7 @@ class StorageManager:
             ent_map = {e["id"]: e for e in cur.get("entries", [])}
             for e in imported_data.get("entries", []):
                 e.setdefault("groupOnly", False)
+                e.setdefault("nl", "")
                 ent_map[e["id"]] = e
             cur["entries"] = list(ent_map.values())
 

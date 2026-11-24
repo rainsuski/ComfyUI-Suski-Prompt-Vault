@@ -3,7 +3,7 @@
 /**
  * 导出与批量分享中心（ExportModalManager）。
  * 支持：
- * 1. 批量分享代码生成：采用 V2 极简元组列式压缩，彻底剔除 UUID/图片哈希等冗余，体积缩减 75% 以上，单条 QQ 轻松发送；
+ * 1. 批量分享代码生成：采用 V3 极简元组列式压缩（含 nl 字段），彻底剔除 UUID/图片哈希等冗余，体积缩减 75% 以上；
  * 2. 整库 JSON 备份导出：维持原有的单文件全量下载。
  */
 
@@ -11,14 +11,6 @@ import { triggerExportLibrary } from "../../api.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
 import { encodeSharePayload } from "../../utils/share_codec.js";
-
-function getSafeIcon(name, size = 13) {
-  if (name === "share") {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>`;
-  }
-  const icon = renderIcon(name, size);
-  return icon || "";
-}
 
 export class ExportModalManager {
   /**
@@ -79,15 +71,15 @@ export class ExportModalManager {
       <div class="prompt-vault-modal pv-modal-large" style="max-width: 780px; min-height: 580px;">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">导出与分享</div>
-          <button type="button" class="prompt-vault-modal-close">${getSafeIcon("x", 16)}</button>
+          <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
         </div>
 
         <div class="pv-modal-tabs">
           <button type="button" class="pv-modal-tab-btn ${this.currentTab === "share" ? "is-active" : ""}" id="pv-tab-share">
-            ${getSafeIcon("share", 13)} <span>批量分享代码</span>
+            ${renderIcon("share", 13)} <span>批量分享代码</span>
           </button>
           <button type="button" class="pv-modal-tab-btn ${this.currentTab === "file" ? "is-active" : ""}" id="pv-tab-file">
-            ${getSafeIcon("download", 13)} <span>整库文件备份</span>
+            ${renderIcon("download", 13)} <span>整库文件备份</span>
           </button>
         </div>
 
@@ -111,8 +103,8 @@ export class ExportModalManager {
         <div class="pv-share-filter-bar">
           <div class="pv-share-filter-inputs">
             <div class="pv-share-search-box">
-              <span class="pv-share-search-icon">${getSafeIcon("search", 13)}</span>
-              <input type="text" class="pv-share-search-input" id="pv-share-search-input" placeholder="搜索词条标题或提示词正文..." value="${this.escapeHtml(this.searchKeyword)}">
+              <span class="pv-share-search-icon">${renderIcon("search", 13)}</span>
+              <input type="text" class="pv-share-search-input" id="pv-share-search-input" placeholder="搜索词条标题或提示词/自然语言..." value="${this.escapeHtml(this.searchKeyword)}">
             </div>
             <select class="prompt-vault-form-select pv-share-cat-dropdown" id="pv-share-cat-select">
               <option value="ALL">全部分类</option>
@@ -121,7 +113,7 @@ export class ExportModalManager {
           </div>
           <div class="pv-share-action-group">
             <button type="button" class="pv-share-btn-accent" id="pv-share-quick-workspace" title="一键选定当前中栏工作区的所有词条">
-              ${getSafeIcon("layers", 12)} <span>选定工作区词条</span>
+              ${renderIcon("layers", 12)} <span>选定工作区词条</span>
             </button>
             <button type="button" class="pv-share-btn-subtle" id="pv-share-select-all">全选</button>
             <button type="button" class="pv-share-btn-subtle" id="pv-share-clear-all">清空</button>
@@ -153,7 +145,7 @@ export class ExportModalManager {
           <div class="pv-share-result-header">
             <div style="display: flex; align-items: center; gap: 8px;">
               <span style="display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(59, 130, 246, 0.2); color: #60a5fa;">
-                ${getSafeIcon("share", 12)}
+                ${renderIcon("share", 12)}
               </span>
               <span style="font-weight: 700; color: #f3f4f6; font-size: 13px;">分享代码已生成 (极速超轻量)</span>
             </div>
@@ -175,7 +167,8 @@ export class ExportModalManager {
         if (kw) {
           const matchTitle = (e.title || "").toLowerCase().includes(kw);
           const matchText = (e.text || e.prompt || "").toLowerCase().includes(kw);
-          return matchTitle || matchText;
+          const matchNl = (e.nl || "").toLowerCase().includes(kw);
+          return matchTitle || matchText || matchNl;
         }
         return true;
       });
@@ -183,7 +176,7 @@ export class ExportModalManager {
       if (filteredEntries.length === 0) {
         return `
           <div class="pv-share-empty-box">
-            <div style="font-size: 20px; opacity: 0.5; margin-bottom: 4px;">🔍</div>
+            <div style="opacity: 0.5; margin-bottom: 4px;">${renderIcon("search", 22)}</div>
             <div>未找到匹配的词条条目</div>
           </div>
         `;
@@ -192,6 +185,7 @@ export class ExportModalManager {
       return filteredEntries.map((entry) => {
         const isChecked = this.selectedEntryIds.has(entry.id);
         const cat = catMap.get(entry.categoryId);
+        const snippetText = (entry.text || entry.prompt || entry.nl || "").replace(/[\r\n]+/g, " ");
         return `
           <label class="pv-share-card-item ${isChecked ? "is-selected" : ""}">
             <div class="pv-share-card-checkbox-wrap">
@@ -203,7 +197,7 @@ export class ExportModalManager {
                 ${cat ? `<span class="pv-share-cat-tag" style="background:${cat.color}18; color:${cat.color}; border: 1px solid ${cat.color}35;">${this.escapeHtml(cat.name)}</span>` : ""}
               </div>
               <div class="pv-share-card-snippet">
-                ${this.escapeHtml((entry.text || entry.prompt || "").replace(/[\r\n]+/g, " ")) || "<span style='opacity:0.4;'>（无提示词正文）</span>"}
+                ${this.escapeHtml(snippetText) || "<span style='opacity:0.4;'>（无提示词正文）</span>"}
               </div>
             </div>
           </label>
@@ -221,7 +215,7 @@ export class ExportModalManager {
       if (filteredGroups.length === 0) {
         return `
           <div class="pv-share-empty-box">
-            <div style="font-size: 20px; opacity: 0.5; margin-bottom: 4px;">📂</div>
+            <div style="opacity: 0.5; margin-bottom: 4px;">${renderIcon("folder", 22)}</div>
             <div>未找到匹配的提示词组</div>
           </div>
         `;
@@ -259,7 +253,7 @@ export class ExportModalManager {
       <div class="pv-export-card">
         <div class="pv-export-card-left">
           <span style="display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 8px; background: rgba(168, 85, 247, 0.18); color: #c084fc;">
-            ${getSafeIcon("upload", 20)}
+            ${renderIcon("upload", 20)}
           </span>
           <div>
             <span class="pv-export-badge">全量单文件备份</span>
@@ -307,17 +301,17 @@ export class ExportModalManager {
         </div>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-export-cancel">关闭</button>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-share-copy-btn" style="display: none; border-color: rgba(59, 130, 246, 0.4); color: #93c5fd;">
-          ${getSafeIcon("check", 12)} <span>复制分享代码</span>
+          ${renderIcon("check", 12)} <span>复制分享代码</span>
         </button>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-share-generate-btn">
-          ${getSafeIcon("share", 12)} <span>生成分享代码</span>
+          ${renderIcon("share", 12)} <span>生成分享代码</span>
         </button>
       `;
     }
     return `
       <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-export-cancel">取消</button>
       <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-file-download-btn">
-        ${getSafeIcon("upload", 12)} <span>下载完整库备份</span>
+        ${renderIcon("upload", 12)} <span>下载完整库备份</span>
       </button>
     `;
   }
@@ -473,12 +467,12 @@ export class ExportModalManager {
           generateBtn.textContent = "已生成并复制！";
           setTimeout(() => {
             generateBtn.disabled = false;
-            generateBtn.innerHTML = `${getSafeIcon("share", 12)} <span>重新生成</span>`;
+            generateBtn.innerHTML = `${renderIcon("share", 12)} <span>重新生成</span>`;
           }, 2000);
         } catch (err) {
           alert(`生成分享代码失败: ${err.message}`);
           generateBtn.disabled = false;
-          generateBtn.innerHTML = `${getSafeIcon("share", 12)} <span>生成分享代码</span>`;
+          generateBtn.innerHTML = `${renderIcon("share", 12)} <span>生成分享代码</span>`;
         }
       });
     }
@@ -488,7 +482,7 @@ export class ExportModalManager {
         if (!codeOutput.value) return;
         await navigator.clipboard.writeText(codeOutput.value);
         const originalHtml = copyBtn.innerHTML;
-        copyBtn.innerHTML = `${getSafeIcon("check", 12)} <span>复制成功！</span>`;
+        copyBtn.innerHTML = `${renderIcon("check", 12)} <span>复制成功！</span>`;
         setTimeout(() => {
           copyBtn.innerHTML = originalHtml;
         }, 1500);
@@ -556,10 +550,10 @@ export class ExportModalManager {
   }
 
   /**
-   * V2 超紧凑协议打包器：
+   * V3 超紧凑协议打包器：
    * 1. 彻底剔除所有 36 位长 UUID，组关联改用精简的整数数组下标 [0, 1, 2]；
    * 2. 彻底剔除无效的 previewHash (接收端不存在此文件) 与本地时间戳 updatedAt；
-   * 3. 采用紧凑列式元组存储，消除重复键名，体积缩减 75% 以上。
+   * 3. 词条元组扩展至第 7 位 [title, text, catIdx, tagNames, colNames, isGroupOnly, nl]，无 nl 时省略第 7 位保持短小体积。
    */
   buildCompactSharePackage() {
     const lib = this.getLibrary() || {};
@@ -594,27 +588,30 @@ export class ExportModalManager {
       return idx;
     };
 
-    // 3. 构造极简 entries 元组：[title, text, catIdx, [tagNames], [colNames], isGroupOnly]
+    // 3. 构造极简 entries 元组：[title, text, catIdx, [tagNames], [colNames], isGroupOnly, nl?]
     const compactEntries = sharedRawEntries.map((e) => {
       const catIdx = getCategoryDictIndex(e.categoryId);
       const tagNames = (e.tagIds || []).map((tid) => tagIdToNameMap.get(tid)).filter(Boolean);
       const colNames = Array.isArray(e.collections) ? e.collections : [];
       const isGroupOnly = e.groupOnly ? 1 : 0;
-      return [
+      const row = [
         e.title || "",
         e.text || e.prompt || "",
         catIdx,
         tagNames,
         colNames,
-        isGroupOnly
+        isGroupOnly,
       ];
+      if (e.nl) {
+        row.push(e.nl);
+      }
+      return row;
     });
 
     // 4. 构造极简 groups 元组：[title, [memberIndices], catIdx, note]
     const compactGroups = [];
     allGroups.forEach((g) => {
       const eids = Array.isArray(g.entryIds) ? g.entryIds : [];
-      // 将组内属于分享集的词条映射为紧凑的整数下标
       const memberIndices = eids
         .filter((eid) => entryIdToIndexMap.has(eid))
         .map((eid) => entryIdToIndexMap.get(eid));
@@ -625,16 +622,16 @@ export class ExportModalManager {
           g.title || "",
           memberIndices,
           catIdx,
-          g.note || ""
+          g.note || "",
         ]);
       }
     });
 
     return {
-      v: 2, // V2 极简协议标识
+      v: 3, // V3 超紧凑协议标识（含 nl 字段）
       c: categoryDict,    // 分类元组字典 [[name, color], ...]
       e: compactEntries,  // 紧凑词条元组列表
-      g: compactGroups    // 紧凑提示词组列表
+      g: compactGroups,   // 紧凑提示词组列表
     };
   }
 

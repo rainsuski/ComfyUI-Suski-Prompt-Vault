@@ -3,22 +3,14 @@
 /**
  * 导入中心（ImportModalManager）。
  * 支持：
- * 1. 批量分享代码一键导入：智能兼容 V2 极简超紧凑格式与 V1 全量格式、分类与收藏夹自主决策、完整还原标签与提示词组拓扑；
- * 2. 本地备份 JSON 文件导入：原有的五维冲突预检与差异合并。
+ * 1. 批量分享代码一键导入：兼容 V3（含 nl 字段）/ V2 极简超紧凑格式与 V1 全量格式、分类与收藏夹自主决策、完整还原标签与提示词组拓扑；
+ * 2. 本地备份 JSON 文件导入：五维冲突预检（含 title/text/nl 比对）与差异合并。
  */
 
 import { importLibrary } from "../../api.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../../utils/events.js";
 import { renderIcon } from "../../utils/icons.js";
 import { decodeSharePayload } from "../../utils/share_codec.js";
-
-function getSafeIcon(name, size = 13) {
-  if (name === "share") {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>`;
-  }
-  const icon = renderIcon(name, size);
-  return icon || "";
-}
 
 function resolveUniqueTitle(rawTitle, existingTitlesSet) {
   const trimmed = (rawTitle || "").trim() || "未命名条目";
@@ -94,15 +86,15 @@ export class ImportModalManager {
       <div class="prompt-vault-modal pv-modal-large" style="max-width: 760px; min-height: 560px;">
         <div class="prompt-vault-modal-header">
           <div class="prompt-vault-modal-title">导入词库</div>
-          <button type="button" class="prompt-vault-modal-close">${getSafeIcon("x", 16)}</button>
+          <button type="button" class="prompt-vault-modal-close">${renderIcon("x", 16)}</button>
         </div>
 
         <div class="pv-modal-tabs">
           <button type="button" class="pv-modal-tab-btn ${this.currentTab === "code" ? "is-active" : ""}" id="pv-tab-import-code">
-            ${getSafeIcon("share", 13)} <span>粘贴分享代码导入</span>
+            ${renderIcon("share", 13)} <span>粘贴分享代码导入</span>
           </button>
           <button type="button" class="pv-modal-tab-btn ${this.currentTab === "file" ? "is-active" : ""}" id="pv-tab-import-file">
-            ${getSafeIcon("download", 13)} <span>本地备份文件导入</span>
+            ${renderIcon("download", 13)} <span>本地备份文件导入</span>
           </button>
         </div>
 
@@ -127,7 +119,7 @@ export class ImportModalManager {
           <div class="pv-import-input-label">
             <span>请粘贴批量分享代码 (以 <code>SUSKI-SHARE-v1:</code> 开头)：</span>
             <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-btn-paste-clipboard" style="padding: 3px 10px; font-size: 11px;">
-              ${getSafeIcon("edit", 11)} <span>从剪贴板读取</span>
+              ${renderIcon("edit", 11)} <span>从剪贴板读取</span>
             </button>
           </div>
           <textarea class="pv-import-code-textarea" id="pv-import-code-input" placeholder="在此粘贴收到的分享代码..."></textarea>
@@ -156,7 +148,7 @@ export class ImportModalManager {
       <div class="pv-import-preview-card">
         <div class="pv-import-preview-header">
           <span style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(16, 185, 129, 0.15); color: #10b981;">
-            ${getSafeIcon("check", 13)}
+            ${renderIcon("check", 13)}
           </span>
           <span style="font-weight: 700; color: #f3f4f6; font-size: 13px;">分享代码校验通过</span>
           <span style="margin-left: auto; font-size: 11px; color: var(--pv-text-muted);">离线解码校验完成</span>
@@ -190,7 +182,7 @@ export class ImportModalManager {
         <!-- 分类归属决策 -->
         <div class="pv-import-decision-box">
           <div class="pv-import-decision-title">
-            ${getSafeIcon("folder", 13)} <span>分类归属策略</span>
+            ${renderIcon("folder", 13)} <span>分类归属策略</span>
           </div>
           <div class="pv-import-radio-group">
             <label class="pv-radio-card ${this.catStrategy === "keep_source" ? "is-active" : ""}">
@@ -217,7 +209,7 @@ export class ImportModalManager {
         <!-- 收藏夹归属决策 -->
         <div class="pv-import-decision-box">
           <div class="pv-import-decision-title">
-            ${getSafeIcon("clock", 13)} <span>收藏夹归属策略</span>
+            ${renderIcon("clock", 13)} <span>收藏夹归属策略</span>
           </div>
           <div class="pv-import-radio-group">
             <label class="pv-radio-card ${this.colStrategy === "keep_source" ? "is-active" : ""}">
@@ -251,8 +243,8 @@ export class ImportModalManager {
         <div class="pv-import-preview-list" id="pv-import-items-viewport">
           ${entries.map((e) => `
             <div class="pv-import-item-tile">
-              <span class="pv-import-item-title">${e.title || "未命名"}</span>
-              <span class="pv-import-item-text">${(e.text || e.prompt || "").replace(/[\r\n]+/g, " ")}</span>
+              <span class="pv-import-item-title">${this.escapeHtml(e.title || "未命名")}</span>
+              <span class="pv-import-item-text">${this.escapeHtml((e.text || e.prompt || e.nl || "").replace(/[\r\n]+/g, " "))}</span>
             </div>
           `).join("")}
         </div>
@@ -264,11 +256,11 @@ export class ImportModalManager {
     if (!this.fileImportContext) {
       return `
         <div class="prompt-vault-empty-state" style="padding: 40px 20px;">
-          <div class="prompt-vault-empty-icon">${getSafeIcon("download", 32)}</div>
+          <div class="prompt-vault-empty-icon">${renderIcon("download", 32)}</div>
           <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">请选择本地词库 JSON 文件</div>
           <div style="font-size: 12px; opacity: 0.7; margin-bottom: 16px;">支持由本插件导出的单文件备份包</div>
           <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-select-file-trigger">
-            ${getSafeIcon("folder", 13)} <span>选择文件...</span>
+            ${renderIcon("folder", 13)} <span>选择文件...</span>
           </button>
         </div>
       `;
@@ -281,7 +273,9 @@ export class ImportModalManager {
 
     const localIdMap = new Map(localEntries.map((e) => [e.id, e]));
     const localContentSet = new Set(
-      localEntries.map((e) => `${(e.title || "").trim()}:::${(e.text || e.prompt || "").trim()}`)
+      localEntries.map(
+        (e) => `${(e.title || "").trim()}:::${(e.text || e.prompt || "").trim()}:::${(e.nl || "").trim()}`
+      )
     );
 
     this.fileConflictEntries = [];
@@ -294,8 +288,9 @@ export class ImportModalManager {
     rawEntries.forEach((item) => {
       const itemTitle = (item.title || "").trim();
       const itemText = (item.text || item.prompt || "").trim();
+      const itemNl = (item.nl || "").trim();
 
-      if (!itemTitle && !itemText) {
+      if (!itemTitle && !itemText && !itemNl) {
         this.fileInvalidEntries.push({ item, reason: "缺少标题与提示词内容" });
         return;
       }
@@ -310,7 +305,8 @@ export class ImportModalManager {
       if (localExact) {
         const localText = (localExact.text || localExact.prompt || "").trim();
         const localTitle = (localExact.title || "").trim();
-        if (localText === itemText && localTitle === itemTitle) {
+        const localNl = (localExact.nl || "").trim();
+        if (localText === itemText && localTitle === itemTitle && localNl === itemNl) {
           this.fileExistingEntries.push(item);
         } else {
           this.fileConflictEntries.push({
@@ -321,7 +317,7 @@ export class ImportModalManager {
           });
         }
       } else {
-        const contentKey = `${itemTitle}:::${itemText}`;
+        const contentKey = `${itemTitle}:::${itemText}:::${itemNl}`;
         if (localContentSet.has(contentKey)) {
           this.fileConflictEntries.push({
             item,
@@ -341,7 +337,7 @@ export class ImportModalManager {
     return `
       <div class="pv-import-banner ${!hasConflicts ? "is-ok" : ""}">
         <div class="pv-import-banner-left">
-          <span class="pv-import-banner-icon">${getSafeIcon(hasConflicts ? "clock" : "check", 22)}</span>
+          <span class="pv-import-banner-icon">${renderIcon(hasConflicts ? "clock" : "check", 22)}</span>
           <div>
             <div class="pv-import-banner-title">
               ${hasConflicts ? "这个备份需要处理冲突" : "备份准备就绪"}
@@ -375,14 +371,14 @@ export class ImportModalManager {
         </div>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-import-cancel">取消</button>
         <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-import-code-submit" ${!this.parsedShareData ? "disabled" : ""}>
-          ${getSafeIcon("download", 12)} <span>确认入库</span>
+          ${renderIcon("download", 12)} <span>确认入库</span>
         </button>
       `;
     }
     return `
       <button type="button" class="prompt-vault-btn prompt-vault-btn-default" id="pv-import-cancel">取消</button>
       <button type="button" class="prompt-vault-btn prompt-vault-btn-primary" id="pv-import-file-submit" ${!this.fileImportContext ? "disabled" : ""}>
-        ${getSafeIcon("download", 12)} <span>执行导入</span>
+        ${renderIcon("download", 12)} <span>执行导入</span>
       </button>
     `;
   }
@@ -426,13 +422,13 @@ export class ImportModalManager {
 
   /**
    * 将解密出来的原始载荷规范化为标准模型：
-   * 自动智能识别 V2 极简超紧凑格式与 V1 全量格式
+   * 兼容 V3（含 nl）/ V2 极简超紧凑格式与 V1 全量格式。
    */
   normalizeSharePackage(raw) {
     if (!raw) return null;
 
-    // V2 极简超紧凑协议格式
-    if (raw.v === 2 || (Array.isArray(raw.e) && Array.isArray(raw.c))) {
+    // V3 / V2 极简超紧凑协议格式
+    if (raw.v === 3 || raw.v === 2 || (Array.isArray(raw.e) && Array.isArray(raw.c))) {
       const catDict = Array.isArray(raw.c) ? raw.c : []; // [[name, color], ...]
       const compactEntries = Array.isArray(raw.e) ? raw.e : [];
       const compactGroups = Array.isArray(raw.g) ? raw.g : [];
@@ -453,6 +449,7 @@ export class ImportModalManager {
         const tagNames = Array.isArray(row[3]) ? row[3] : [];
         const colNames = Array.isArray(row[4]) ? row[4] : [];
         const isGroupOnly = Boolean(row[5]);
+        const nl = typeof row[6] === "string" ? row[6] : "";
 
         tagNames.forEach((t) => allTagsSet.add(t));
         colNames.forEach((c) => allColsSet.add(c));
@@ -462,6 +459,7 @@ export class ImportModalManager {
           index: idx,
           title,
           text,
+          nl,
           categoryId: catIdx >= 0 && srcCategories[catIdx] ? srcCategories[catIdx].id : null,
           categoryName: catIdx >= 0 && srcCategories[catIdx] ? srcCategories[catIdx].name : "",
           tagNames,
@@ -512,6 +510,7 @@ export class ImportModalManager {
       ...e,
       id: e.id || `v1_entry_${idx}`,
       index: idx,
+      nl: e.nl || "",
       tagNames: (e.tagIds || []).map((tid) => tagMap.get(tid)).filter(Boolean),
     }));
 
@@ -742,6 +741,7 @@ export class ImportModalManager {
           id: newEntryId,
           title: cleanTitle,
           text: se.text || se.prompt || "",
+          nl: se.nl || "",
           note: se.note || "",
           categoryId: finalCatId,
           collections: finalCollections,
@@ -948,6 +948,16 @@ export class ImportModalManager {
         }
       });
     }
+  }
+
+  escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   close() {

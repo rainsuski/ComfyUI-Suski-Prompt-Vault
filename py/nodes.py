@@ -2,7 +2,7 @@
 """ComfyUI 自定义节点与提示词加权拼接引擎。
 
 定义 PromptVaultSelector 节点类，解析前端传递的磁贴序列并实现加权格式化与清洗。
-支持 prompt/text 双字段键兼容，对 Nodes 2.0 序列化通道进行静默隐藏标记，
+支持 prompt/text 与 nl 双模式输出（nl 模式不包裹权重），对 Nodes 2.0 序列化通道进行静默隐藏标记，
 并提供数据探针元数据自省协议接口。
 """
 
@@ -84,9 +84,9 @@ class PromptVaultSelector:
     ) -> str:
         """根据磁贴序列及前置/后置文本生成加权清洗后的提示词。
 
-        加权规则：
-            - weight == 1.0: 保持原始内容，不添加外层包裹。
-            - weight != 1.0: 格式化为 (prompt:weight)。
+        输出规则：
+            - use_nl == true: 输出 nl 文本原貌，不做权重包裹。
+            - use_nl == false: 输出 text/prompt；weight == 1.0 时保持原貌，否则格式化为 (prompt:weight)。
             - 忽略所有处于静音 (enabled == false) 状态的磁贴。
         """
         tiles = cls.parse_tiles(selected_tiles_data)
@@ -96,10 +96,18 @@ class PromptVaultSelector:
         if prepend_prompt and str(prepend_prompt).strip():
             segments.append(str(prepend_prompt).strip())
 
-        # 2. 磁贴序列加权处理
+        # 2. 磁贴序列加权/自然语言处理
         for tile in tiles:
             enabled = tile.get("enabled", True)
             if not enabled:
+                continue
+
+            use_nl = bool(tile.get("use_nl", False))
+            if use_nl:
+                nl_content = (tile.get("nl") or "").strip()
+                if not nl_content:
+                    continue
+                segments.append(nl_content)
                 continue
 
             prompt_content = (tile.get("text") or tile.get("prompt") or "").strip()

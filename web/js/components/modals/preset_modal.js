@@ -3,9 +3,10 @@
 /**
  * 单个词条录入与编辑弹窗（PresetModalManager）。
  * 适配 v2 归一化规范：词条是独立实体，组合维护 entryIds 列表。
+ * 支持 Tag 与自然语言 (NL) 双字段录入校验（二者不可同时为空），
  * 支持普通词条【保存】/【新建】与组合成员【另存为】/【保存至组】场景化操作，
  * 集成 Tag 智能快捷键（Ctrl+滚轮 / 方向键快速调权），
- * 严格执行全库项（词条名与组名）唯一重名校验。
+ * 严格执行全库项唯一重名校验。
  */
 
 import { getThumbnailUrl, upsertEntry, upsertGroup } from "../../api.js";
@@ -103,6 +104,11 @@ export class PresetModalManager {
             <textarea class="prompt-vault-form-textarea" id="pv-form-prompt" placeholder=""></textarea>
           </div>
 
+          <div class="prompt-vault-form-col">
+            <label class="prompt-vault-form-label">自然语言 (NL) 内容</label>
+            <textarea class="prompt-vault-form-textarea" id="pv-form-nl" placeholder=""></textarea>
+          </div>
+
           <div class="prompt-vault-form-row">
             <div class="prompt-vault-form-col">
               <label class="prompt-vault-form-label">标签 Tags (逗号分隔)</label>
@@ -154,6 +160,7 @@ export class PresetModalManager {
         const titleInput = this.overlay.querySelector("#pv-form-title");
         const categorySelect = this.overlay.querySelector("#pv-form-category");
         const promptInput = this.overlay.querySelector("#pv-form-prompt");
+        const nlInput = this.overlay.querySelector("#pv-form-nl");
         const tagsInput = this.overlay.querySelector("#pv-form-tags");
         const folderSelect = this.overlay.querySelector("#pv-form-folder");
         const noteInput = this.overlay.querySelector("#pv-form-note");
@@ -163,6 +170,7 @@ export class PresetModalManager {
             if (titleInput) titleInput.value = data.title || "";
             if (categorySelect) categorySelect.value = data.categoryId || data.category_id || "";
             if (promptInput) promptInput.value = data.text || data.prompt || "";
+            if (nlInput) nlInput.value = data.nl || "";
             if (noteInput) noteInput.value = data.note || "";
 
             const lib = this.getLibrary();
@@ -317,6 +325,7 @@ export class PresetModalManager {
     async submitStandardForm() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -326,8 +335,8 @@ export class PresetModalManager {
             alert("请输入词条标题！");
             return;
         }
-        if (!prompt) {
-            alert("请输入提示词内容！");
+        if (!prompt && !nl) {
+            alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }
 
@@ -343,6 +352,7 @@ export class PresetModalManager {
             id: selfId || undefined,
             title,
             text: prompt,
+            nl,
             categoryId: categoryId || null,
             tags: tags,
             collections: folder ? [folder] : [],
@@ -381,6 +391,7 @@ export class PresetModalManager {
     async submitSaveAsNew() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -390,8 +401,8 @@ export class PresetModalManager {
             alert("请输入词条标题！");
             return;
         }
-        if (!prompt) {
-            alert("请输入提示词内容！");
+        if (!prompt && !nl) {
+            alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }
 
@@ -405,6 +416,7 @@ export class PresetModalManager {
         const payload = {
             title,
             text: prompt,
+            nl,
             categoryId: categoryId || null,
             tags: tags,
             collections: folder ? [folder] : [],
@@ -444,6 +456,7 @@ export class PresetModalManager {
     async submitSaveToGroup() {
         const title = (this.overlay.querySelector("#pv-form-title")?.value || "").trim();
         const prompt = (this.overlay.querySelector("#pv-form-prompt")?.value || "").trim();
+        const nl = (this.overlay.querySelector("#pv-form-nl")?.value || "").trim();
         const categoryId = this.overlay.querySelector("#pv-form-category")?.value || null;
         const tagsRaw = this.overlay.querySelector("#pv-form-tags")?.value || "";
         const folder = (this.overlay.querySelector("#pv-form-folder")?.value || "").trim();
@@ -453,8 +466,8 @@ export class PresetModalManager {
             alert("请输入成员标题！");
             return;
         }
-        if (!prompt) {
-            alert("请输入提示词内容！");
+        if (!prompt && !nl) {
+            alert("提示词 Prompt 内容与自然语言 (NL) 内容不能同时为空！");
             return;
         }
 
@@ -488,6 +501,7 @@ export class PresetModalManager {
                 id: selfEntryId || undefined,
                 title,
                 text: prompt,
+                nl,
                 categoryId: categoryId || null,
                 tags: tags,
                 collections: folder ? [folder] : [],
@@ -523,6 +537,7 @@ export class PresetModalManager {
                 state.markGroupMemberAsSaved(instanceId, {
                     title: savedEntry.title,
                     prompt: savedEntry.text || savedEntry.prompt,
+                    nl: savedEntry.nl || "",
                     ref_preset_id: savedEntry.id,
                 });
             }

@@ -231,6 +231,7 @@ app.registerExtension({
                         instance_id: tileDraft.instance_id,
                         title: tileDraft.title,
                         text: tileDraft.prompt,
+                        nl: tileDraft.nl || "",
                         categoryId: tileDraft.category_id,
                         previewHash: tileDraft.thumbnail,
                     },

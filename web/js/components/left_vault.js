@@ -2,27 +2,24 @@
 
 /**
  * 左栏：预设提示词库（Preset Vault）组件。
- * 提词条视图与组合视图切换、精简单行搜索展开、
- * 组视图手风琴二级折叠展开、跨视图平滑滚动定位与微光闪烁、
- * 组合卡片与词条保持一致的点击添加/删除模式，箭头独立折叠，支持组信息快速编辑。
+ * 提供词条视图与组合视图切换、text/nl 全局展示与添加模式切换、精简单行搜索展开、
+ * 组视图手风琴二级折叠展开、跨视图平滑滚动定位与微光闪烁，
+ * 并将排序偏好与展示模式持久化至浏览器 localStorage。
  * 支持仅用于组合（groupOnly）条目在词条视图中自动过滤隐藏。
  */
 
 import { deleteGroup } from "../api.js";
-import { CHANNEL, getRecentUsageMap } from "../state.js";
+import {
+    CHANNEL,
+    getLeftVaultDisplayMode,
+    getLeftVaultSortRecent,
+    getRecentUsageMap,
+    setLeftVaultDisplayMode,
+    setLeftVaultSortRecent,
+} from "../state.js";
 import { isolateCanvasEvents, isolateWheelScroll } from "../utils/events.js";
 import { renderIcon } from "../utils/icons.js";
 import { createTileElement } from "./tile.js";
-
-function getVectorIcon(name, size = 13) {
-    if (name === "search") {
-        return renderIcon("search", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
-    }
-    if (name === "edit") {
-        return renderIcon("edit", size) || `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`;
-    }
-    return renderIcon(name, size);
-}
 
 function buildCategoryHierarchyOptions(categories) {
     const result = [{ id: "ALL", name: "全部分类", label: "全部分类" }];
@@ -95,7 +92,8 @@ export class LeftVaultComponent {
 
         this.viewMode = "single";
         this.isSearchActive = false;
-        this.sortByRecent = false;
+        this.sortByRecent = getLeftVaultSortRecent();
+        this.displayMode = getLeftVaultDisplayMode();
         this.expandedGroupIds = new Set();
 
         this.filterCategory = "ALL";
@@ -143,7 +141,7 @@ export class LeftVaultComponent {
 
         const title = document.createElement("span");
         title.className = "prompt-vault-col-title";
-        title.innerHTML = `${getVectorIcon("folder", 14)} <span>提示词库</span>`;
+        title.innerHTML = `${renderIcon("folder", 14)} <span>提示词库</span>`;
         titleBar.appendChild(title);
 
         const btnGroup = document.createElement("div");
@@ -153,7 +151,7 @@ export class LeftVaultComponent {
         const manageTaxonomyBtn = document.createElement("button");
         manageTaxonomyBtn.type = "button";
         manageTaxonomyBtn.className = "prompt-vault-btn prompt-vault-btn-default";
-        manageTaxonomyBtn.innerHTML = `${getVectorIcon("settings", 12)} <span>管理分类/收藏夹</span>`;
+        manageTaxonomyBtn.innerHTML = `${renderIcon("settings", 12)} <span>管理分类/收藏夹</span>`;
         manageTaxonomyBtn.title = "管理嵌套子分类色彩与收藏夹";
         manageTaxonomyBtn.addEventListener("click", () => {
             if (typeof this.onOpenTaxonomyManager === "function") {
@@ -165,7 +163,7 @@ export class LeftVaultComponent {
         const importBtn = document.createElement("button");
         importBtn.type = "button";
         importBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-        importBtn.innerHTML = getVectorIcon("download", 13);
+        importBtn.innerHTML = renderIcon("download", 13);
         importBtn.title = "导入词库";
         importBtn.addEventListener("click", () => {
             if (typeof this.onOpenImportModal === "function") {
@@ -177,7 +175,7 @@ export class LeftVaultComponent {
         const exportBtn = document.createElement("button");
         exportBtn.type = "button";
         exportBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-        exportBtn.innerHTML = getVectorIcon("upload", 13);
+        exportBtn.innerHTML = renderIcon("upload", 13);
         exportBtn.title = "导出词库";
         exportBtn.addEventListener("click", () => {
             if (typeof this.onOpenExportModal === "function") {
@@ -203,7 +201,7 @@ export class LeftVaultComponent {
         this.singleViewBtn = document.createElement("button");
         this.singleViewBtn.type = "button";
         this.singleViewBtn.className = "prompt-vault-toggle-btn is-active";
-        this.singleViewBtn.innerHTML = `${getVectorIcon("messageSquare", 12)} <span>词条视图</span>`;
+        this.singleViewBtn.innerHTML = `${renderIcon("messageSquare", 12)} <span>词条视图</span>`;
         this.singleViewBtn.addEventListener("click", () => {
             if (this.viewMode !== "single") {
                 this.viewMode = "single";
@@ -216,7 +214,7 @@ export class LeftVaultComponent {
         this.groupViewBtn = document.createElement("button");
         this.groupViewBtn.type = "button";
         this.groupViewBtn.className = "prompt-vault-toggle-btn";
-        this.groupViewBtn.innerHTML = `${getVectorIcon("layers", 12)} <span>组合视图</span>`;
+        this.groupViewBtn.innerHTML = `${renderIcon("layers", 12)} <span>组合视图</span>`;
         this.groupViewBtn.addEventListener("click", () => {
             if (this.viewMode !== "group") {
                 this.viewMode = "group";
@@ -253,12 +251,12 @@ export class LeftVaultComponent {
         if (this.isSearchActive) {
             // 搜索展开状态：输入框取代整行，右侧带有退出按钮
             const searchRow = document.createElement("div");
-            searchRow.className = "prompt-vault-toolbar-row";
+            searchRow.className = "prompt-vault-toolbar-row prompt-vault-toolbar-compact";
 
             const searchInput = document.createElement("input");
             searchInput.type = "text";
             searchInput.className = "prompt-vault-input prompt-vault-search-box";
-            searchInput.placeholder = "搜索标题/提示词内容...";
+            searchInput.placeholder = "搜索标题/Tag/自然语言...";
             searchInput.value = this.searchKeyword;
             searchInput.addEventListener("input", () => {
                 this.searchKeyword = searchInput.value.trim().toLowerCase();
@@ -268,8 +266,8 @@ export class LeftVaultComponent {
 
             const closeSearchBtn = document.createElement("button");
             closeSearchBtn.type = "button";
-            closeSearchBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-            closeSearchBtn.innerHTML = getVectorIcon("x", 12);
+            closeSearchBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon-sm";
+            closeSearchBtn.innerHTML = renderIcon("x", 12);
             closeSearchBtn.title = "退出搜索";
             closeSearchBtn.addEventListener("click", () => {
                 this.isSearchActive = false;
@@ -282,13 +280,14 @@ export class LeftVaultComponent {
             this.filterRowContainer.appendChild(searchRow);
             requestAnimationFrame(() => searchInput.focus());
         } else {
-            // 常态：分类下拉 + 收藏夹下拉 + 时钟排序按钮 + 搜索图标按钮
+            // 常态：分类下拉 + 收藏夹下拉 + 模式切换按钮 + 排序按钮 + 搜索按钮
             const filterRow = document.createElement("div");
-            filterRow.className = "prompt-vault-toolbar-row";
+            filterRow.className = "prompt-vault-toolbar-row prompt-vault-toolbar-compact";
 
             this.categorySelect = document.createElement("select");
             this.categorySelect.className = "prompt-vault-select";
             this.categorySelect.style.flex = "1 1 0";
+            this.categorySelect.style.minWidth = "0";
             this.categorySelect.addEventListener("change", () => {
                 this.filterCategory = this.categorySelect.value;
                 this.renderList();
@@ -298,6 +297,7 @@ export class LeftVaultComponent {
             this.collectionSelect = document.createElement("select");
             this.collectionSelect.className = "prompt-vault-select";
             this.collectionSelect.style.flex = "1 1 0";
+            this.collectionSelect.style.minWidth = "0";
             this.collectionSelect.style.display = this.viewMode === "group" ? "none" : "block";
             this.collectionSelect.addEventListener("change", () => {
                 this.filterCollection = this.collectionSelect.value;
@@ -305,18 +305,30 @@ export class LeftVaultComponent {
             });
             filterRow.appendChild(this.collectionSelect);
 
-            // 搜索按钮左侧添加：按最近使用优先排序时钟按钮
+            const isNlMode = this.displayMode === "nl";
+            const modeToggleBtn = document.createElement("button");
+            modeToggleBtn.type = "button";
+            modeToggleBtn.className = `prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon-sm${isNlMode ? " is-active" : ""}`;
+            modeToggleBtn.innerHTML = renderIcon(isNlMode ? "fileText" : "tag", 12);
+            modeToggleBtn.title = isNlMode
+                ? "当前展示：自然语言 NL（点击切换为 Tag）"
+                : "当前展示：Tag（点击切换为自然语言 NL）";
+            modeToggleBtn.addEventListener("click", () => {
+                this.displayMode = this.displayMode === "nl" ? "text" : "nl";
+                setLeftVaultDisplayMode(this.displayMode);
+                this.renderFilterRow();
+                this.renderList();
+            });
+            filterRow.appendChild(modeToggleBtn);
+
             const clockSortBtn = document.createElement("button");
             clockSortBtn.type = "button";
-            clockSortBtn.className = `prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon${this.sortByRecent ? " is-active" : ""}`;
-            clockSortBtn.innerHTML = getVectorIcon("clock", 13);
+            clockSortBtn.className = `prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon-sm${this.sortByRecent ? " is-active" : ""}`;
+            clockSortBtn.innerHTML = renderIcon("clock", 12);
             clockSortBtn.title = this.sortByRecent ? "当前：按最近使用优先（点击取消）" : "按最近使用优先排序";
-            if (this.sortByRecent) {
-                clockSortBtn.style.color = "var(--pv-primary, #3b82f6)";
-                clockSortBtn.style.borderColor = "var(--pv-primary, #3b82f6)";
-            }
             clockSortBtn.addEventListener("click", () => {
                 this.sortByRecent = !this.sortByRecent;
+                setLeftVaultSortRecent(this.sortByRecent);
                 this.renderFilterRow();
                 this.renderList();
             });
@@ -324,8 +336,8 @@ export class LeftVaultComponent {
 
             const searchToggleBtn = document.createElement("button");
             searchToggleBtn.type = "button";
-            searchToggleBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon";
-            searchToggleBtn.innerHTML = getVectorIcon("search", 13);
+            searchToggleBtn.className = "prompt-vault-btn prompt-vault-btn-default prompt-vault-btn-icon-sm";
+            searchToggleBtn.innerHTML = renderIcon("search", 12);
             searchToggleBtn.title = "展开搜索";
             searchToggleBtn.addEventListener("click", () => {
                 this.isSearchActive = true;
@@ -469,12 +481,13 @@ export class LeftVaultComponent {
             if (this.searchKeyword) {
                 const titleMatch = (item.title || "").toLowerCase().includes(this.searchKeyword);
                 const textMatch = (item.text || item.prompt || "").toLowerCase().includes(this.searchKeyword);
+                const nlMatch = (item.nl || "").toLowerCase().includes(this.searchKeyword);
                 const itemTagIds = Array.isArray(item.tagIds) ? item.tagIds : [];
                 const tagMatch = itemTagIds.some((tid) => {
                     const tObj = tagsDict.find((t) => t.id === tid);
                     return tObj && tObj.name.toLowerCase().includes(this.searchKeyword);
                 });
-                if (!titleMatch && !textMatch && !tagMatch) return false;
+                if (!titleMatch && !textMatch && !nlMatch && !tagMatch) return false;
             }
 
             return true;
@@ -492,7 +505,7 @@ export class LeftVaultComponent {
         if (filtered.length === 0) {
             this.listViewport.innerHTML = `
         <div class="prompt-vault-empty-state">
-          <div class="prompt-vault-empty-icon">${getVectorIcon("messageSquare", 28)}</div>
+          <div class="prompt-vault-empty-icon">${renderIcon("messageSquare", 28)}</div>
           <div>未找到匹配词条</div>
           <div style="font-size:11px; opacity:0.7;">尝试切换分类、收藏夹或重置搜索词</div>
         </div>
@@ -503,6 +516,7 @@ export class LeftVaultComponent {
                 const tileElement = createTileElement({
                     data: entry,
                     mode: "vault",
+                    displayMode: this.displayMode,
                     state: this.state,
                     isActive: false,
                     isAlreadyAdded: isAlreadyAdded,
@@ -546,7 +560,8 @@ export class LeftVaultComponent {
                     if (!ent) return false;
                     return (
                         (ent.title || "").toLowerCase().includes(this.searchKeyword) ||
-                        (ent.text || ent.prompt || "").toLowerCase().includes(this.searchKeyword)
+                        (ent.text || ent.prompt || "").toLowerCase().includes(this.searchKeyword) ||
+                        (ent.nl || "").toLowerCase().includes(this.searchKeyword)
                     );
                 });
                 if (!memberMatch) return false;
@@ -567,7 +582,7 @@ export class LeftVaultComponent {
         if (filtered.length === 0) {
             this.listViewport.innerHTML = `
         <div class="prompt-vault-empty-state">
-          <div class="prompt-vault-empty-icon">${getVectorIcon("layers", 28)}</div>
+          <div class="prompt-vault-empty-icon">${renderIcon("layers", 28)}</div>
           <div>未找到匹配提示词组</div>
           <div style="font-size:11px; opacity:0.7;">可在中栏多选词条后点击“存为提示词组”进行创建</div>
         </div>
@@ -592,7 +607,7 @@ export class LeftVaultComponent {
                 // 独立折叠展开箭头
                 const expandIcon = document.createElement("span");
                 expandIcon.className = "prompt-vault-group-chevron";
-                expandIcon.innerHTML = getVectorIcon(isExpanded ? "chevronDown" : "chevronRight", 13);
+                expandIcon.innerHTML = renderIcon(isExpanded ? "chevronDown" : "chevronRight", 13);
                 expandIcon.title = isExpanded ? "折叠组内成员" : "展开组内成员";
                 expandIcon.addEventListener("click", (e) => {
                     e.stopPropagation();
@@ -640,7 +655,7 @@ export class LeftVaultComponent {
                 editGroupBtn.type = "button";
                 editGroupBtn.className = "prompt-vault-tile-btn";
                 editGroupBtn.title = "编辑提示词组名称与所属分类";
-                editGroupBtn.innerHTML = getVectorIcon("edit", 13);
+                editGroupBtn.innerHTML = renderIcon("edit", 13);
                 editGroupBtn.addEventListener("click", (e) => {
                     e.stopPropagation();
                     if (typeof this.onOpenEditGroupModal === "function") {
@@ -653,7 +668,7 @@ export class LeftVaultComponent {
                 delGroupBtn.type = "button";
                 delGroupBtn.className = "prompt-vault-tile-btn is-danger";
                 delGroupBtn.title = "解散此组合 (不删除词条)";
-                delGroupBtn.innerHTML = getVectorIcon("trash", 13);
+                delGroupBtn.innerHTML = renderIcon("trash", 13);
                 delGroupBtn.addEventListener("click", async (e) => {
                     e.stopPropagation();
                     if (confirm(`确定要解散提示词组 [${group.title}] 吗？\n（此操作仅解散组合关系，内部词条仍保留在词库中）`)) {
@@ -674,7 +689,9 @@ export class LeftVaultComponent {
                     if (installed) {
                         this.state.removeGroupByPresetId(group.id);
                     } else {
-                        this.state.addGroup(group, entries, categories);
+                        this.state.addGroup(group, entries, categories, {
+                            useNl: this.displayMode === "nl",
+                        });
                     }
                 });
 
@@ -697,6 +714,7 @@ export class LeftVaultComponent {
                             const memberTileEl = createTileElement({
                                 data: memberEntry,
                                 mode: "vault",
+                                displayMode: this.displayMode,
                                 state: this.state,
                                 isActive: false,
                                 isAlreadyAdded: isMemberAdded,

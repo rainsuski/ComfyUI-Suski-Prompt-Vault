@@ -58,6 +58,20 @@ document.addEventListener("click", (e) => {
     }
 });
 
+/**
+ * 解析当前磁贴卡片实际展示/输出的文本是否应取 nl 字段。
+ * @param {any} data
+ * @param {string} mode
+ * @param {string} [displayMode="text"]
+ * @returns {boolean}
+ */
+function resolveEffectiveNl(data, mode, displayMode = "text") {
+    if (mode === "selected") {
+        return Boolean(data && data.use_nl);
+    }
+    return displayMode === "nl" && Boolean(data && (data.nl || "").trim());
+}
+
 function showPopover(targetTile, data, categories, tagsDict) {
     removeActivePopover();
 
@@ -103,13 +117,26 @@ function showPopover(targetTile, data, categories, tagsDict) {
     if (promptContent) {
         const promptLabel = document.createElement("div");
         promptLabel.className = "prompt-vault-popover-section-label";
-        promptLabel.textContent = "提示词";
+        promptLabel.textContent = "提示词 (Tag)";
         popover.appendChild(promptLabel);
 
         const promptText = document.createElement("div");
         promptText.className = "prompt-vault-popover-prompt";
         promptText.textContent = promptContent;
         popover.appendChild(promptText);
+    }
+
+    const nlContent = data.nl || "";
+    if (nlContent) {
+        const nlLabel = document.createElement("div");
+        nlLabel.className = "prompt-vault-popover-section-label";
+        nlLabel.textContent = "自然语言 (NL)";
+        popover.appendChild(nlLabel);
+
+        const nlText = document.createElement("div");
+        nlText.className = "prompt-vault-popover-prompt";
+        nlText.textContent = nlContent;
+        popover.appendChild(nlText);
     }
 
     const tagIds = Array.isArray(data.tagIds) ? data.tagIds : [];
@@ -269,10 +296,15 @@ function applyCategoryBadge(cardEl, data, categories) {
  * 词库模式（entry）与已选模式（tile instance）共用同一套字段回退规则。
  * @param {HTMLElement} cardEl - `.prompt-vault-tile` 元素
  * @param {any} data - 词条实体或已选磁贴实例
- * @param {{ categories?: any[] }} [ctx]
+ * @param {{ categories?: any[], displayMode?: "text"|"nl" }} [ctx]
  */
-export function applyTileState(cardEl, data, { categories = [] } = {}) {
+export function applyTileState(cardEl, data, { categories = [], displayMode } = {}) {
     if (!cardEl || !data) return;
+
+    const mode = cardEl.dataset.mode || "vault";
+    const resolvedDisplayMode = displayMode || cardEl.dataset.displayMode || "text";
+    const effectiveNl = resolveEffectiveNl(data, mode, resolvedDisplayMode);
+    const hasNl = Boolean((data.nl || "").trim());
 
     const titleEl = cardEl.querySelector(".prompt-vault-tile-title");
     if (titleEl) {
@@ -281,9 +313,15 @@ export function applyTileState(cardEl, data, { categories = [] } = {}) {
         titleEl.title = data.title || "";
     }
 
+    const nlBadge = cardEl.querySelector(".prompt-vault-tile-nl-badge");
+    if (nlBadge) {
+        nlBadge.hidden = !(mode === "selected" && Boolean(data.use_nl));
+    }
+
     const snippetEl = cardEl.querySelector(".prompt-vault-tile-snippet");
     if (snippetEl) {
-        const nextSnippet = (data.text || data.prompt || "").replace(/[\r\n]+/g, " ");
+        const rawSnippet = effectiveNl ? (data.nl || "") : (data.text || data.prompt || "");
+        const nextSnippet = rawSnippet.replace(/[\r\n]+/g, " ");
         if (snippetEl.textContent !== nextSnippet) snippetEl.textContent = nextSnippet;
     }
 
@@ -298,6 +336,20 @@ export function applyTileState(cardEl, data, { categories = [] } = {}) {
     const weightBadge = cardEl.querySelector(".prompt-vault-tile-weight");
     if (weightBadge) {
         weightBadge.textContent = `× ${formatWeightBadgeText(data.weight == null ? 1.0 : data.weight)}`;
+    }
+
+    const modeBtn = cardEl.querySelector(".prompt-vault-tile-mode-btn");
+    if (modeBtn) {
+        const isNl = Boolean(data.use_nl);
+        modeBtn.innerHTML = renderIcon(isNl ? "fileText" : "tag", 13);
+        modeBtn.classList.toggle("is-active", isNl);
+        if (isNl) {
+            modeBtn.title = "当前模式：自然语言 NL（点击切换为 Tag）";
+        } else {
+            modeBtn.title = hasNl
+                ? "当前模式：Tag（点击切换为自然语言 NL）"
+                : "当前词条暂无自然语言 (NL) 内容";
+        }
     }
 
     const isMuted = data.enabled === false;
@@ -317,6 +369,7 @@ export function applyTileState(cardEl, data, { categories = [] } = {}) {
 export function createTileElement({
     data,
     mode,
+    displayMode = "text",
     state,
     isActive = false,
     isAlreadyAdded = false,
@@ -336,6 +389,7 @@ export function createTileElement({
     const tile = document.createElement("div");
     tile.className = "prompt-vault-tile";
     tile.dataset.mode = mode;
+    tile.dataset.displayMode = displayMode;
     if (instanceId) tile.dataset.instanceId = instanceId;
     if (!isSelectedMode && data.id) tile.dataset.entryId = data.id;
     if (isActive) tile.classList.add("is-active");
@@ -381,7 +435,7 @@ export function createTileElement({
             if (existing) {
                 state.removeTile(existing.instance_id);
             } else {
-                state.addTileFromEntry(data, categories);
+                state.addTileFromEntry(data, categories, { useNl: displayMode === "nl" });
             }
         }
     });
@@ -410,6 +464,12 @@ export function createTileElement({
     const titleText = document.createElement("span");
     titleText.className = "prompt-vault-tile-title";
     titleRow.appendChild(titleText);
+
+    const nlBadge = document.createElement("span");
+    nlBadge.className = "prompt-vault-tile-nl-badge";
+    nlBadge.textContent = "NL";
+    nlBadge.hidden = true;
+    titleRow.appendChild(nlBadge);
 
     // 词条视图：极简微型跳转标记
     if (!isSelectedMode && Array.isArray(belongingGroups) && belongingGroups.length > 0) {
@@ -473,6 +533,15 @@ export function createTileElement({
         );
         actionsBar.appendChild(weightBadge);
 
+        const modeBtn = document.createElement("button");
+        modeBtn.type = "button";
+        modeBtn.className = "prompt-vault-tile-btn prompt-vault-tile-mode-btn";
+        modeBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            state.toggleTileMode(instanceId);
+        });
+        actionsBar.appendChild(modeBtn);
+
         const muteBtn = document.createElement("button");
         muteBtn.type = "button";
         muteBtn.className = "prompt-vault-tile-btn prompt-vault-tile-mute";
@@ -504,12 +573,15 @@ export function createTileElement({
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "prompt-vault-tile-btn";
-    copyBtn.title = "复制完整 Prompt 到剪贴板";
+    copyBtn.title = "复制当前展示的内容到剪贴板";
     copyBtn.innerHTML = renderIcon("copy", 13);
     copyBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
-            const copyContent = data.text || data.prompt || "";
+            const effectiveNl = resolveEffectiveNl(data, mode, displayMode);
+            const copyContent = effectiveNl
+                ? (data.nl || "")
+                : (data.text || data.prompt || "");
             await navigator.clipboard.writeText(copyContent);
             copyBtn.innerHTML = renderIcon("check", 13);
             setTimeout(() => {
@@ -556,7 +628,7 @@ export function createTileElement({
     tile.appendChild(actionsBar);
 
     // 骨架建完后统一填充一次，之后内容变更只需重复调用 applyTileState
-    applyTileState(tile, data, { categories });
+    applyTileState(tile, data, { categories, displayMode });
 
     if (!isSelectedMode) {
         return tile;

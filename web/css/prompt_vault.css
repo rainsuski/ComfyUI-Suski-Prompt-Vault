@@ -128,6 +128,10 @@
     width: 100%;
 }
 
+.prompt-vault-toolbar-compact {
+    gap: 4px;
+}
+
 /* 悬浮圆角输入框与下拉选择框 */
 .prompt-vault-input,
 .prompt-vault-select {
@@ -216,6 +220,21 @@
     padding: 0;
     flex-shrink: 0;
     border-radius: var(--pv-radius-sm);
+}
+
+/* 左栏紧凑工具图标按钮（24x24），避免窄栏宽下挤压下拉框文字 */
+.prompt-vault-btn-icon-sm {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    flex-shrink: 0;
+    border-radius: var(--pv-radius-sm);
+}
+
+.prompt-vault-btn-icon-sm.is-active {
+    color: var(--pv-accent-primary);
+    border-color: var(--pv-accent-primary);
+    background-color: rgba(59, 130, 246, 0.14);
 }
 
 /* 多选批量操作工具栏 (单行防挤压排布) */
@@ -330,12 +349,81 @@
     gap: 4px;
 }
 
+.prompt-vault-editor-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 .prompt-vault-editor-label {
     font-size: 11px;
     font-weight: 600;
     color: var(--pv-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+}
+
+/* iPhone 风格 TAG/NL 胶囊拨动开关 */
+.pv-iphone-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    user-select: none;
+    outline: none;
+}
+
+.pv-iphone-switch-text {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: var(--pv-text-muted);
+    transition: color 0.16s ease;
+}
+
+.pv-iphone-switch:not(.is-nl) .pv-switch-tag {
+    color: var(--pv-text-primary);
+}
+
+.pv-iphone-switch.is-nl .pv-switch-nl {
+    color: #22d3ee;
+}
+
+.pv-iphone-switch-track {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--pv-border-strong);
+    box-sizing: border-box;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.pv-iphone-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease;
+}
+
+.pv-iphone-switch.is-nl .pv-iphone-switch-track {
+    background: rgba(6, 182, 212, 0.35);
+    border-color: #06b6d4;
+}
+
+.pv-iphone-switch.is-nl .pv-iphone-switch-thumb {
+    transform: translateX(14px);
+    background: #ffffff;
 }
 
 .prompt-vault-editor-textarea {

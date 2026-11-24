@@ -384,7 +384,8 @@ export class MiddleSelectedComponent {
             if (!this.searchKeyword) return true;
             const titleMatch = (tile.title || "").toLowerCase().includes(this.searchKeyword);
             const promptMatch = (tile.prompt || "").toLowerCase().includes(this.searchKeyword);
-            return titleMatch || promptMatch;
+            const nlMatch = (tile.nl || "").toLowerCase().includes(this.searchKeyword);
+            return titleMatch || promptMatch || nlMatch;
         });
 
         this.listViewport.innerHTML = "";
