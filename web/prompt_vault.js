@@ -4,7 +4,7 @@
  * ComfyUI-Suski-Prompt-Vault 前端主扩展注册入口。
  * 遵循归一化模型：entries 存放纯净词条，groups 存放关系组合。
  * 各节点保持独立工作流（适配分步采样），通过全局 WebSocket 广播与防抖同步词库。
- * 彻底静默兼容 Nodes 2.0 序列化通道，免疫侧栏 Widget 宽度污染（Issue #12443）。
+ * 同时兼容 Classic Canvas 与 Nodes 2.0 Vue 渲染管线，屏蔽属性面板宽度污染。
  */
 
 import { api } from "../../../scripts/api.js";
@@ -27,6 +27,16 @@ import { isolateCanvasEvents } from "./js/utils/events.js";
 
 /** 目标节点名称标识 */
 const TARGET_NODE_TYPE = "PromptVaultSelector";
+
+/** 节点默认与最小几何尺寸 */
+const DEFAULT_NODE_WIDTH = 1120;
+const DEFAULT_NODE_HEIGHT = 620;
+const MIN_NODE_WIDTH = 960;
+const MIN_NODE_HEIGHT = 520;
+const MIN_DOM_WIDGET_HEIGHT = 460;
+
+/** 运行时自增序号：保证撤销/重做同 ID 重建节点时不复用旧 DOM 包装器 */
+let domWidgetTypeSeq = 0;
 
 /** 全局标准库缓存数据 (对齐 suski-prompt-library v1 规范) */
 let globalLibrary = {
@@ -80,7 +90,7 @@ async function notifyAllNodesRefresh() {
 }
 
 /**
- * 彻底隐藏序列化 Widget（同时适配 Classic Canvas 与 Nodes 2.0 Vue DOM）。
+ * 彻底隐藏序列化 Widget（同时屏蔽 Classic Canvas、Nodes 2.0 节点视图与属性侧栏）。
  * @param {any} widget 待隐藏的 widget 实例
  */
 function makeWidgetInvisible(widget) {
@@ -89,6 +99,11 @@ function makeWidgetInvisible(widget) {
     widget.options = widget.options || {};
     widget.options.hidden = true;
     widget.options.hideInPanel = true;
+    widget.options.surfaces = {
+        canvas: "never",
+        vueNode: "never",
+        panel: "never",
+    };
     widget.computeSize = () => [0, -4];
     widget.draw = () => { };
 
@@ -100,6 +115,23 @@ function makeWidgetInvisible(widget) {
         widget.inputEl.style.display = "none";
         widget.inputEl.hidden = true;
     }
+}
+
+/**
+ * 配置主界面 DOM Widget 的展示面：在画布与 Vue 节点中渲染，在右侧属性面板中屏蔽。
+ * @param {any} domWidget
+ */
+function applyDomWidgetSurfaceOptions(domWidget) {
+    if (!domWidget) return;
+    domWidget.options = domWidget.options || {};
+    delete domWidget.options.canvasOnly;
+    domWidget.options.hideInPanel = true;
+    domWidget.options.hideOnZoom = true;
+    domWidget.options.surfaces = {
+        canvas: "shown",
+        vueNode: "shown",
+        panel: "never",
+    };
 }
 
 app.registerExtension({
@@ -128,7 +160,7 @@ app.registerExtension({
 
             node.flags = node.flags || {};
             node.flags.no_collapse = true;
-            node.size = [1120, 620];
+            node.size = [DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT];
 
             const state = new VaultNodeState(node);
             node._vaultState = state;
@@ -147,7 +179,6 @@ app.registerExtension({
                 dataWidget = node.addWidget("text", "selected_tiles_data", "[]", () => { });
             }
 
-            // 全平台隐形适配
             makeWidgetInvisible(dataWidget);
 
             // 数据双向序列化锁定
@@ -244,7 +275,7 @@ app.registerExtension({
                 };
             };
 
-            // 挂载左栏组件（导入直接打开综合导入中心，导出注入当前工作区状态以支持选定工作区词条）
+            // 挂载左栏组件
             new LeftVaultComponent(
                 colLeft,
                 state,
@@ -297,36 +328,45 @@ app.registerExtension({
                 }
             );
 
-            const domWidget = node.addDOMWidget("prompt_vault_ui", "custom", container, {
+            const runtimeWidgetType = `prompt_vault_ui_${++domWidgetTypeSeq}`;
+            const domWidget = node.addDOMWidget("prompt_vault_ui", runtimeWidgetType, container, {
                 serialize: false,
-                canvasOnly: true,
-                hideOnZoom: false,
+                hideInPanel: true,
+                hideOnZoom: true,
+                surfaces: {
+                    canvas: "shown",
+                    vueNode: "shown",
+                    panel: "never",
+                },
                 getValue() {
                     return JSON.stringify(state.selectedTiles);
                 },
                 setValue(value) {
+                    if (typeof value !== "string") return;
+                    if (value === JSON.stringify(state.selectedTiles)) return;
                     state.loadFromSerialized(value);
                 },
                 getMinHeight() {
-                    return 520;
+                    return MIN_DOM_WIDGET_HEIGHT;
                 },
             });
 
-            // 深度免疫侧栏 Issue #12443 宽度污染
             if (domWidget) {
-                domWidget.options = domWidget.options || {};
-                domWidget.options.canvasOnly = true;
-                domWidget.options.hideInPanel = true;
+                applyDomWidgetSurfaceOptions(domWidget);
 
+                // 防止侧栏渲染器回写覆盖 widget.width 引起画布布局塌陷
                 try {
-                    Object.defineProperty(domWidget, "width", {
-                        get() {
-                            return undefined;
-                        },
-                        set(_) { },
-                        configurable: true,
-                        enumerable: true,
-                    });
+                    const desc = Object.getOwnPropertyDescriptor(domWidget, "width");
+                    if (!desc || desc.configurable) {
+                        Object.defineProperty(domWidget, "width", {
+                            get() {
+                                return undefined;
+                            },
+                            set(_) { },
+                            configurable: true,
+                            enumerable: true,
+                        });
+                    }
                 } catch (err) {
                     console.warn("[PromptVault] Failed to define width guard on domWidget", err);
                 }
@@ -340,6 +380,19 @@ app.registerExtension({
             }
 
             const node = this;
+            if (Array.isArray(node.size)) {
+                const targetW = Math.max(node.size[0] || 0, MIN_NODE_WIDTH);
+                const targetH = Math.max(node.size[1] || 0, MIN_NODE_HEIGHT);
+                if (targetW !== node.size[0] || targetH !== node.size[1]) {
+                    if (typeof node.setSize === "function") {
+                        node.setSize([targetW, targetH]);
+                    } else {
+                        node.size[0] = targetW;
+                        node.size[1] = targetH;
+                    }
+                }
+            }
+
             if (node._vaultState) {
                 const dataWidget = node.widgets?.find((w) => w.name === "selected_tiles_data");
                 if (dataWidget) {
@@ -349,11 +402,7 @@ app.registerExtension({
                 node._vaultState.loadFromSerialized(serializedValue);
 
                 const domWidget = node.widgets?.find((w) => w.name === "prompt_vault_ui");
-                if (domWidget) {
-                    domWidget.options = domWidget.options || {};
-                    domWidget.options.canvasOnly = true;
-                    domWidget.options.hideInPanel = true;
-                }
+                applyDomWidgetSurfaceOptions(domWidget);
             }
         };
 
@@ -362,8 +411,8 @@ app.registerExtension({
             if (typeof origOnResize === "function") {
                 origOnResize.apply(this, arguments);
             }
-            if (size[0] < 960) size[0] = 960;
-            if (size[1] < 520) size[1] = 520;
+            if (size[0] < MIN_NODE_WIDTH) size[0] = MIN_NODE_WIDTH;
+            if (size[1] < MIN_NODE_HEIGHT) size[1] = MIN_NODE_HEIGHT;
         };
     },
 });

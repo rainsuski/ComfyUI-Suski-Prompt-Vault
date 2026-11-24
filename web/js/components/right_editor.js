@@ -214,6 +214,7 @@ export class RightEditorComponent {
 
         this.textarea = document.createElement("textarea");
         this.textarea.className = "prompt-vault-editor-textarea comfy-multiline-input";
+        this.textarea.setAttribute("data-capture-wheel", "true");
         this.textarea.placeholder = "";
         this.textarea.spellcheck = false;
 

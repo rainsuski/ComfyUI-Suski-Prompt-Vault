@@ -424,6 +424,7 @@ export class LeftVaultComponent {
 
     renderList() {
         const prevScrollTop = this.listViewport.scrollTop;
+        const hadFocusInside = this.listViewport.contains(document.activeElement);
 
         if (!this.isSearchActive) {
             this.refreshDropdownOptions();
@@ -443,6 +444,9 @@ export class LeftVaultComponent {
         }
 
         this.listViewport.scrollTop = prevScrollTop;
+        if (hadFocusInside && !this.listViewport.contains(document.activeElement)) {
+            this.listViewport.focus({ preventScroll: true });
+        }
     }
 
     renderSingleView(entries, groups, categories, tagsDict) {

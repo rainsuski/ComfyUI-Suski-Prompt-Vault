@@ -519,6 +519,7 @@ export function createTileElement({
     if (isSelectedMode) {
         const weightBadge = document.createElement("div");
         weightBadge.className = "prompt-vault-tile-weight";
+        weightBadge.setAttribute("data-capture-wheel", "true");
         weightBadge.title = "滚轮上下滚动调节权重 (步长 0.1)";
 
         weightBadge.addEventListener(

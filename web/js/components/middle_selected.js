@@ -376,6 +376,7 @@ export class MiddleSelectedComponent {
 
     renderList() {
         const prevScrollTop = this.listViewport.scrollTop;
+        const hadFocusInside = this.listViewport.contains(document.activeElement);
 
         const tiles = this.state.selectedTiles;
         const categoriesConfig = this.getCategoriesConfig();
@@ -423,5 +424,9 @@ export class MiddleSelectedComponent {
 
         this.listViewport.scrollTop = prevScrollTop;
         this.updateSelectionVisuals();
+
+        if (hadFocusInside && !this.listViewport.contains(document.activeElement)) {
+            this.listViewport.focus({ preventScroll: true });
+        }
     }
 }

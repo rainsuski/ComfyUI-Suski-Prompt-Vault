@@ -427,8 +427,9 @@ export class VaultNodeState {
         if (targetWidget) {
             targetWidget.value = JSON.stringify(this.selectedTiles);
         }
-        if (window.app && window.app.graph) {
-            window.app.graph.setDirtyCanvas(true, true);
+        const graph = this.node.graph || window.app?.graph;
+        if (graph && typeof graph.setDirtyCanvas === "function") {
+            graph.setDirtyCanvas(true, true);
         }
     }
 

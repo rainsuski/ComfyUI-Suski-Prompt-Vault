@@ -1,10 +1,10 @@
 /* File: ComfyUI-Suski-Prompt-Vault/web/js/utils/events.js */
 
 /**
- * LiteGraph 画布事件隔离与拦截模块。
- * 阻止 DOM 元素内部的用户操作（点击、拖拽、键盘输入、滚轮）穿透冒泡至 ComfyUI 底层画布，
- * 全面静默整个组件区域内的浏览器 Ctrl+滚轮全局网页缩放，
- * 同时接管鼠标中键拖拽行为，驱动底层 LiteGraph 画布顺畅平移。
+ * 画布事件隔离与交互适配模块。
+ * 阻止 DOM 元素内部的点击、拖拽、键盘输入与滚轮操作误触发底层画布，
+ * 遵循 Nodes 2.0 焦点式滚轮捕获协议（data-capture-wheel + 焦点建立）保留局部滚动与调权能力，
+ * 并按宿主渲染模式适配鼠标中键拖动画布平移。
  */
 
 /**
@@ -22,7 +22,47 @@ function getGraphCanvas() {
 }
 
 /**
- * 启动鼠标中键拖动画布平移监听。
+ * 判断元素是否挂载在 Nodes 2.0 Vue 节点容器内。
+ * @param {EventTarget|null} target
+ * @returns {boolean}
+ */
+function isVueNodesContext(target) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(".lg-node-widgets, [data-node-id], .lg-node"));
+}
+
+/**
+ * 判断元素是否为文本输入控件（用于避免在用户持续输入时抢走打字焦点）。
+ * 下拉框（SELECT）与按钮不属于持续键入控件，不在此拦截范围内。
+ * @param {Element|null} el
+ * @returns {boolean}
+ */
+export function isTextInputControl(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.isContentEditable) return true;
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return true;
+    if (tag === "INPUT") {
+        const type = (/** @type {HTMLInputElement} */ (el)).type?.toLowerCase() || "text";
+        return !["button", "submit", "reset", "checkbox", "radio", "range", "color", "file"].includes(type);
+    }
+    return false;
+}
+
+/**
+ * 判断当前聚焦元素与目标滚动容器是否同属一个 PromptVault 节点实例。
+ * @param {Element|null} activeEl
+ * @param {HTMLElement} containerEl
+ * @returns {boolean}
+ */
+function isInSameVaultContainer(activeEl, containerEl) {
+    if (!(activeEl instanceof Element)) return false;
+    const vaultRoot = containerEl.closest(".prompt-vault-container");
+    return Boolean(vaultRoot && vaultRoot.contains(activeEl));
+}
+
+/**
+ * 启动 Classic 模式下的鼠标中键拖动画布平移监听。
  * @param {PointerEvent|MouseEvent} startEvent
  */
 function startCanvasMiddleDrag(startEvent) {
@@ -61,9 +101,8 @@ function startCanvasMiddleDrag(startEvent) {
 }
 
 /**
- * 为目标元素绑定输入与交互拦截，切断向底层 LiteGraph 拖动画布及键盘快捷键的传递。
- * 当用户在元素内按下鼠标中键（button === 1）时，接管并平移底层画布。
- * 全面拦截该容器范围内的 Ctrl+滚轮 浏览器全局缩放。
+ * 为目标元素绑定输入与交互拦截，切断向底层画布拖动画布及快捷键的传递。
+ * 按住鼠标中键时：Nodes 2.0 下放行至 TransformPane 原生平移，Classic 下由 ds.offset 驱动平移。
  * @param {HTMLElement} element - 需要隔离事件的 DOM 容器
  */
 export function isolateCanvasEvents(element) {
@@ -71,6 +110,9 @@ export function isolateCanvasEvents(element) {
 
     const onPointerDown = (event) => {
         if (event.button === 1) {
+            if (isVueNodesContext(element)) {
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             startCanvasMiddleDrag(event);
@@ -82,6 +124,9 @@ export function isolateCanvasEvents(element) {
     const onMouseDown = (event) => {
         if (event.button === 1) {
             event.preventDefault();
+            if (isVueNodesContext(element)) {
+                return;
+            }
             event.stopPropagation();
             return;
         }
@@ -91,6 +136,9 @@ export function isolateCanvasEvents(element) {
     const stopHandler = (event) => {
         if (event.button === 1) {
             event.preventDefault();
+            if (isVueNodesContext(element)) {
+                return;
+            }
             event.stopPropagation();
             return;
         }
@@ -106,7 +154,7 @@ export function isolateCanvasEvents(element) {
     element.addEventListener("keydown", stopHandler, { passive: false });
     element.addEventListener("keyup", stopHandler, { passive: false });
 
-    // 容器级阻断：在整个组件内彻底静默 Ctrl+滚轮 导致的浏览器全局缩放
+    // 容器级阻断：静默 Ctrl/Meta+滚轮 导致的浏览器全局网页缩放
     element.addEventListener(
         "wheel",
         (event) => {
@@ -120,36 +168,79 @@ export function isolateCanvasEvents(element) {
 
 /**
  * 绑定滚动区域的滚轮事件隔离，确保列表内部滚动时不触发画布放大与缩小。
- * 1. 智能放行具备独立滚动能力的子元素（如 textarea）；
- * 2. 按住 Ctrl/Meta 时全面阻断浏览器全局网页缩放，平滑降级为普通纵向滚动列表，彻底消除顶底与中间的行为撕裂；
- * 3. 普通滚动时切断边缘穿透，防止误缩放底层 ComfyUI 画布。
+ * 1. 声明 data-capture-wheel="true" 与可聚焦属性（tabIndex = -1），
+ *    在 pointerenter / pointermove / pointerdown 时维持容器焦点，满足 Nodes 2.0 捕获阶段焦点校验；
+ * 2. 保护外部节点及弹窗的文本输入焦点，同时允许从同节点其它控件切入滚动区时建立滚动焦点；
+ * 3. 指针离开时仅释放容器自身焦点，不影响画布快捷键与内部正在编辑的表单控件；
+ * 4. 按住 Ctrl/Meta 时阻断浏览器全局网页缩放，普通滚动时切断边缘穿透。
  * @param {HTMLElement} scrollContainer - 具备 overflow-y 的滚动容器
  */
 export function isolateWheelScroll(scrollContainer) {
     if (!scrollContainer) return;
 
+    scrollContainer.setAttribute("data-capture-wheel", "true");
+    if (!scrollContainer.hasAttribute("tabindex")) {
+        scrollContainer.tabIndex = -1;
+    }
+    scrollContainer.style.outline = "none";
+
+    scrollContainer.addEventListener("pointerenter", () => {
+        const active = document.activeElement;
+        if (scrollContainer.contains(active)) return;
+        // 保护外部节点或弹窗中的文本输入焦点；同节点内从搜索框/编辑器切入列表时允许建立滚动焦点
+        if (isTextInputControl(active) && !isInSameVaultContainer(active, scrollContainer)) {
+            return;
+        }
+        scrollContainer.focus({ preventScroll: true });
+    });
+
+    scrollContainer.addEventListener("pointermove", () => {
+        const active = document.activeElement;
+        if (scrollContainer.contains(active)) return;
+        // 列表重绘、按钮销毁或初次创建时节点恰好位于指针下方时，仅在非文本输入状态下补全焦点
+        if (isTextInputControl(active)) return;
+        scrollContainer.focus({ preventScroll: true });
+    });
+
+    scrollContainer.addEventListener("pointerdown", (event) => {
+        const target = /** @type {Element|null} */ (event.target);
+        if (isTextInputControl(target) || target?.tagName === "SELECT") return;
+        if (!scrollContainer.contains(document.activeElement)) {
+            scrollContainer.focus({ preventScroll: true });
+        }
+    });
+
+    scrollContainer.addEventListener("pointerleave", () => {
+        if (document.activeElement === scrollContainer) {
+            scrollContainer.blur();
+        }
+    });
+
     scrollContainer.addEventListener(
         "wheel",
         (event) => {
-            // 阻断滚轮向 LiteGraph 画布冒泡导致画布缩放
             event.stopPropagation();
 
-            // 若事件源是内部具备独立滚动能力的子元素（如 textarea），交由子元素自身处理
             const target = /** @type {HTMLElement|null} */ (event.target);
-            if (target && target !== scrollContainer) {
-                const targetIsScrollable = target.scrollHeight > target.clientHeight;
-                if (targetIsScrollable) {
-                    return;
-                }
-            }
-
+            const targetIsScrollable = Boolean(
+                target &&
+                target !== scrollContainer &&
+                target.scrollHeight > target.clientHeight
+            );
             const isCtrl = event.ctrlKey || event.metaKey;
 
-            // 无论处于列表顶部、中部还是底部，只要按住 Ctrl，坚决阻止浏览器全局缩放网页
+            // 无论处于列表顶部、中部还是底部，按住 Ctrl 时阻断浏览器缩放并降级为纵向滚动
             if (isCtrl) {
                 event.preventDefault();
-                // 降级为平滑纵向滚动当前列表本身
-                scrollContainer.scrollTop += event.deltaY;
+                if (targetIsScrollable && target) {
+                    target.scrollTop += event.deltaY;
+                } else {
+                    scrollContainer.scrollTop += event.deltaY;
+                }
+                return;
+            }
+
+            if (targetIsScrollable) {
                 return;
             }
 
@@ -161,7 +252,7 @@ export function isolateWheelScroll(scrollContainer) {
                 return;
             }
 
-            // 到达顶部或底部时阻止默认滚动穿透至 ComfyUI 画布
+            // 到达顶部或底部时阻止默认滚动穿透至画布
             const isAtTop = scrollTop <= 0 && event.deltaY < 0;
             const isAtBottom = scrollTop + clientHeight >= scrollHeight && event.deltaY > 0;
 
@@ -174,7 +265,7 @@ export function isolateWheelScroll(scrollContainer) {
 }
 
 /**
- * 为拖拽把手及磁贴切断 dragstart 导致的 LiteGraph 节点整体移动。
+ * 为拖拽把手及磁贴切断 dragstart 导致的节点整体移动。
  * @param {HTMLElement} element - 磁贴或拖拽把手 DOM
  */
 export function isolateDragEvents(element) {
